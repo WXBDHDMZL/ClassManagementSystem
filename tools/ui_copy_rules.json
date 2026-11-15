@@ -1,0 +1,43 @@
+{
+  "_comment": "UI-01 功能界面文案门禁。Dart 测试 test/ui_copy_policy_test.dart 与 Python 门禁 tools/check_rules.py 共用本文件，改规则只改这里。",
+  "forbidden": [
+    "保留所有权利",
+    "专有软件",
+    "更新内容",
+    "更新说明",
+    "本次更新",
+    "本版更新",
+    "版本更新",
+    "更新日志",
+    "旧版本",
+    "旧版",
+    "旧备份",
+    "旧数据",
+    "上一版",
+    "之前的版本",
+    "此前版本",
+    "老版本",
+    "已移除",
+    "不再支持",
+    "新版本",
+    "升级后",
+    "V2.",
+    "V3."
+  ],
+  "allowed": ["更新日志.txt"],
+  "gated_features": [
+    {
+      "_comment": "功能未开放时，界面文案不得再提该功能。命中 gated_word 的字面量必须落在含 guard 的窗口内，或带 marker 注释，或属于 exempt_files（结构上已整体隐藏）。",
+      "word": "考勤",
+      "guard": "AttendanceFeature.enabled",
+      "marker": "ui-copy: attendance",
+      "window": 20,
+      "scope": ["lib/widgets"],
+      "exempt_files": [
+        "lib/widgets/attendance_dialog.dart",
+        "lib/widgets/settings/attendance_settings_page.dart",
+        "lib/widgets/settings_panel.dart"
+      ]
+    }
+  ]
+}
