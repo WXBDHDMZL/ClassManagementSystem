@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.7
+ * 版本 (Version): V4.9.8
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -44,6 +44,7 @@ import '../services/atomic_file.dart';
 import '../services/auth_service.dart';
 import '../services/desktop_service.dart';
 import '../services/error_log_service.dart';
+import '../services/github_update_service.dart';
 import '../services/import_service.dart';
 import '../services/local_storage_paths.dart';
 import '../services/log_file_service.dart';

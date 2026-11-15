@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.7
+ * 版本 (Version): V4.9.8
  * 创建日期 (Created): 2026-07-25 
  * 
  * 统一配色方案与主题入口。

@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.7
+ * 版本 (Version): V4.9.8
  * 创建日期 (Created): 2026-10-01
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -21,13 +21,18 @@ class AppVersion {
   const AppVersion._();
 
   /// 展示用版本号（如 V2.25.2）。
-  static const String version = 'V4.9.7';
+  static const String version = 'V4.9.8';
 
   /// pubspec.yaml 中的 version 字段（便于发布脚本核对）。
-  static const String pubspecVersion = '4.9.7+169';
+  static const String pubspecVersion = '4.9.8+170';
 
-  /// 公开源码地址。仓库尚未公开时留空，界面改用 [contactEmail] 提供源码。
-  static const String sourceCodeUrl = '';
+  /// 公开源码地址。
+  static const String sourceCodeUrl =
+      'https://github.com/WXBDHDMZL/ClassManagementSystem';
+
+  /// GitHub 仓库归属（用于程序内检查更新）。
+  static const String githubOwner = 'WXBDHDMZL';
+  static const String githubRepo = 'ClassManagementSystem';
 
   /// 作者联系方式：源码获取、许可问题与问题反馈。
   static const String contactEmail = 'WXBDHDMZL@outlook.com';
