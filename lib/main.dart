@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.8
+ * 版本 (Version): V4.10.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -25,6 +25,7 @@ import './services/error_log_service.dart';
 import './services/local_storage_paths.dart';
 import './services/log_file_service.dart';
 import './services/operation_log_service.dart';
+import './services/update_check_service.dart';
 import './models/password_policy.dart';
 import './widgets/header_bar.dart';
 import './widgets/student_card.dart';
@@ -148,6 +149,11 @@ Future<void> main() async {
       child: const MyApp(),
     ),
   );
+
+  // 启动时静默检查更新：不阻塞界面，有可用版本时在「关于」中提示。
+  if (provider.appData.settings.checkUpdateOnStartup) {
+    unawaited(UpdateCheckService.checkInBackground());
+  }
 
   // 开机自启动：--tray 进托盘，--ball 直接进入悬浮球；两者原生首帧都不显示主窗口。
   // 这里不再等 Flutter 首帧回调 —— 窗口被原生隐藏时首帧回调可能不触发，

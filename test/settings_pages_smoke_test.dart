@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import 'package:class_management_system/constants/app_theme.dart';
+import 'package:class_management_system/constants/app_version.dart';
 import 'package:class_management_system/providers/app_data_provider.dart';
 import 'package:class_management_system/widgets/settings_panel.dart';
 import 'package:class_management_system/widgets/settings_pages.dart';
@@ -289,9 +290,24 @@ void main() {
     expect(find.text('打开日志文件夹'), findsOneWidget);
     expect(find.text('查看操作日志'), findsOneWidget);
     expect(find.text('清理 6 个月前日志'), findsOneWidget);
-    // 程序更新已降级到维护页。
-    expect(find.text('程序更新'), findsOneWidget);
-    expect(find.text('选择更新包'), findsOneWidget);
+    // 更新入口已移到关于页。
+    expect(find.text('程序更新'), findsNothing);
+    expect(find.text('选择更新包'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('关于页：版本、启动检查更新与项目地址齐全', (tester) async {
+    final provider = AppDataProvider();
+    await _pump(tester, provider, const AboutSettingsPage());
+
+    expect(find.text('应用版本'), findsOneWidget);
+    expect(find.text(AppVersion.version), findsOneWidget);
+    expect(find.text('启动时检查更新'), findsOneWidget);
+    expect(find.text('检查更新'), findsOneWidget);
+    expect(find.text('项目地址'), findsOneWidget);
+    expect(find.text(AppVersion.sourceCodeUrl), findsOneWidget);
+    expect(find.text('AGPL-3.0-only'), findsWidgets);
+    expect(provider.appData.settings.checkUpdateOnStartup, isTrue);
     expect(tester.takeException(), isNull);
   });
 

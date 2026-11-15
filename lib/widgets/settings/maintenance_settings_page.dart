@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.8
+ * 版本 (Version): V4.10.0
  * 创建日期 (Created): 2026-10-24
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -12,7 +12,7 @@
 
 part of '../settings_pages.dart';
 
-/// 日志与维护页：数据文件位置、打开数据文件夹、日志查看/导出/清理、程序更新。
+/// 日志与维护页：数据文件位置、打开数据文件夹、日志查看/导出/清理。
 class MaintenanceSettingsPage extends StatelessWidget {
   const MaintenanceSettingsPage({super.key});
 
@@ -161,8 +161,6 @@ class MaintenanceSettingsPage extends StatelessWidget {
         const SettingsHint(
           '日志在磁盘上均为加密文件；查看/导出时解密为明文，导出内容可能含学生姓名，请妥善保管。',
         ),
-        const SizedBox(height: 24),
-        const UpdatePackSettingsPage(),
       ],
     );
   }

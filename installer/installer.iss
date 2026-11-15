@@ -1,22 +1,22 @@
 [Setup]
 AppId={{A5B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName=班级管理系统
-AppVersion=4.9.8
-AppVerName=班级管理系统 V4.9.8
+AppVersion=4.10.0
+AppVerName=班级管理系统 V4.10.0
 AppPublisher=WXBDHDMZL
 AppCopyright=© 2026 WXBDHDMZL｜AGPL-3.0-only
 ; 审计 P2-59：显式声明 64 位安装（{autopf} 解析为 Program Files 而不是 (x86)）
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-VersionInfoVersion=4.9.8.0
-VersionInfoProductVersion=4.9.8
+VersionInfoVersion=4.10.0.0
+VersionInfoProductVersion=4.10.0
 VersionInfoProductName=班级管理系统
 VersionInfoDescription=班级管理系统 安装程序
 DefaultDirName={autopf}\班级管理系统
 DefaultGroupName=班级管理系统
 AllowNoIcons=yes
 OutputDir=output
-OutputBaseFilename=班级管理系统_安装包_v4.9.8
+OutputBaseFilename=班级管理系统_安装包_v4.10.0
 Compression=lzma/ultra64
 SolidCompression=yes
 WizardStyle=modern

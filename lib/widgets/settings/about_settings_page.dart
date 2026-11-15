@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.8
+ * 版本 (Version): V4.10.0
  * 创建日期 (Created): 2026-07-25
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -11,18 +11,28 @@
  */
 part of '../settings_pages.dart';
 
-/// 关于页（版本信息与开源致谢）。
-///
-/// 说明：原先这里还有一行"数据存储路径"，已于 V2.21.0 移除——它与"数据"
-/// 设置页的路径信息重复（那边有可复制、可打开目录的版本）。此前遗留的
-/// 字段注释与 StatefulWidget 外壳一并去掉，本页无任何状态。
+/// 关于页：版本、更新检查、项目与许可信息。
 class AboutSettingsPage extends StatelessWidget {
   const AboutSettingsPage({super.key});
+
+  Future<void> _openProjectPage(BuildContext context) async {
+    final url = AppVersion.sourceCodeUrl;
+    if (url.isEmpty) return;
+    try {
+      await Process.start('rundll32', ['url.dll,FileProtocolHandler', url]);
+    } on Object catch (e) {
+      if (context.mounted) {
+        showTopSnackBar(context, '打开项目地址失败：$e', isError: true);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final muted = mutedTextColor(theme, 0.65);
+    final provider = Provider.of<AppDataProvider>(context);
+    final settings = provider.appData.settings;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -66,21 +76,39 @@ class AboutSettingsPage extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 20),
-        const SettingsSectionTitle('版本信息'),
-        _infoRow(theme, muted, '程序版本', AppVersion.version),
-        _infoRow(theme, muted, '运行平台', 'Windows 桌面版'),
-        _infoRow(theme, muted, '技术框架', 'Flutter · Material 3'),
-        _infoRow(theme, muted, '开发作者', 'WXBDHDMZL'),
-        _infoRow(theme, muted, '版权声明', '© 2026 WXBDHDMZL｜AGPL-3.0-only'),
-        _infoRow(theme, muted, '开源许可证', 'AGPL-3.0-only'),
-        _infoRow(
+        const SettingsSectionTitle('版本'),
+        _infoRow(theme, muted, '应用版本', AppVersion.version),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(
+            '启动时检查更新',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+          subtitle: Text(
+            '启动时自动检查 GitHub 上的正式发布版本，有可用版本时在本页提示',
+            style: theme.textTheme.bodySmall?.copyWith(color: muted),
+          ),
+          value: settings.checkUpdateOnStartup,
+          onChanged: (value) => provider.setCheckUpdateOnStartup(value),
+        ),
+        const SizedBox(height: 4),
+        const AboutUpdateSection(),
+        const SizedBox(height: 20),
+        const SettingsSectionTitle('项目'),
+        _linkRow(
+          context,
           theme,
           muted,
-          '源码获取',
-          AppVersion.sourceCodeUrl.isEmpty
-              ? AppVersion.contactEmail
-              : AppVersion.sourceCodeUrl,
+          '项目地址',
+          AppVersion.sourceCodeUrl,
+          onTap: () => _openProjectPage(context),
         ),
+        _infoRow(theme, muted, '开源许可证', 'AGPL-3.0-only'),
+        _infoRow(theme, muted, '开发作者', 'WXBDHDMZL'),
+        _infoRow(theme, muted, '版权声明', '© 2026 WXBDHDMZL｜AGPL-3.0-only'),
         const SizedBox(height: 16),
         const SettingsSectionTitle('功能简介'),
         Text(
@@ -95,7 +123,7 @@ class AboutSettingsPage extends StatelessWidget {
           '记录、名单与设置只保存在本机的「班级管理系统」文件夹，不会上传；'
           '天气查询仅发送所选地区名称或坐标。'
           '主数据为 .enc 文件，同目录的 .bak 为上一份自动备份；'
-          '日志在「日志」子目录中按月记录每次增删改的时间与内容，可用于核对数据变更。'
+          '日志在「日志」子目录中以单个加密文件记录每次增删改的时间与内容，可用于核对数据变更。'
           '换电脑或重装前，备份整个「班级管理系统」文件夹即可保留全部记录。',
           style: theme.textTheme.bodySmall?.copyWith(color: muted, height: 1.5),
         ),
@@ -138,6 +166,54 @@ class AboutSettingsPage extends StatelessWidget {
               value,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _linkRow(
+    BuildContext context,
+    ThemeData theme,
+    Color muted,
+    String label,
+    String value, {
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(color: muted),
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: onTap,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      value,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.open_in_new,
+                    size: 14,
+                    color: theme.colorScheme.primary,
+                  ),
+                ],
               ),
             ),
           ),

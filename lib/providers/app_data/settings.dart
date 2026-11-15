@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.8
+ * 版本 (Version): V4.10.0
  * 创建日期 (Created): 2026-07-25
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -465,6 +465,15 @@ mixin _SettingsDomain on _ProviderBase {
     if (settings.studentSearchEnabled == enabled) return;
     _appData.settings = settings.copyWith(studentSearchEnabled: enabled);
     _log('主页学生搜索', enabled ? '显示搜索框' : '隐藏搜索框');
+    _save();
+  }
+
+  /// 是否在启动时自动检查 GitHub 上的正式发布版本。
+  void setCheckUpdateOnStartup(bool enabled) {
+    final settings = _appData.settings;
+    if (settings.checkUpdateOnStartup == enabled) return;
+    _appData.settings = settings.copyWith(checkUpdateOnStartup: enabled);
+    _log('启动检查更新', enabled ? '已开启' : '已关闭');
     _save();
   }
 

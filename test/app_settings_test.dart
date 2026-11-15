@@ -119,6 +119,25 @@ void main() {
     );
   });
 
+  test('启动时检查更新默认开启，并完整往返', () {
+    final defaults = AppSettings(themeMode: ThemeModeType.system);
+    expect(defaults.checkUpdateOnStartup, isTrue);
+
+    final disabled = AppSettings(
+      themeMode: ThemeModeType.system,
+      checkUpdateOnStartup: false,
+    );
+    expect(
+      AppSettings.fromJson(disabled.toJson()).checkUpdateOnStartup,
+      isFalse,
+    );
+    // 旧数据缺字段时保持开启，不改变用户默认体验。
+    expect(
+      AppSettings.fromJson(const <String, dynamic>{}).checkUpdateOnStartup,
+      isTrue,
+    );
+  });
+
   test('悬浮球位置锁定默认关闭，并完整往返', () {
     final defaults = AppSettings(themeMode: ThemeModeType.system);
     expect(defaults.ballPositionLocked, isFalse);

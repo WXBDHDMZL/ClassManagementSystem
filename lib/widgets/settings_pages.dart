@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.8
+ * 版本 (Version): V4.10.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -51,6 +51,7 @@ import '../services/log_file_service.dart';
 import '../services/operation_log_service.dart';
 import '../services/security_service.dart';
 import '../services/statistics_service.dart';
+import '../services/update_check_service.dart';
 import '../services/update_launcher.dart';
 import '../utils/file_names.dart';
 import 'confirm_destructive.dart';
@@ -76,7 +77,7 @@ import '../utils/app_clock.dart';
 ///  - attendance_settings_page        考勤设置页
 ///  - window_settings_page            窗口与启动设置页
 ///  - period_settings_page            时间段设置页
-///  - update_pack_settings_page       程序更新页
+///  - about_update_section            关于页的更新区域
 ///  - data_settings_page             表格与数据包设置页
 ///  - maintenance_settings_page       日志与维护页
 ///  - backup_settings_page            备份与恢复设置页
@@ -94,7 +95,7 @@ part 'settings/statistics_settings_page.dart';
 part 'settings/attendance_settings_page.dart';
 part 'settings/window_settings_page.dart';
 part 'settings/period_settings_page.dart';
-part 'settings/update_pack_settings_page.dart';
+part 'settings/about_update_section.dart';
 part 'settings/data_settings_page.dart';
 part 'settings/maintenance_settings_page.dart';
 part 'settings/backup_settings_page.dart';

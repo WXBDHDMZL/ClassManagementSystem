@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.9.8
+ * 版本 (Version): V4.10.0
  * 创建日期 (Created): 2026-10-05 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -89,9 +89,13 @@ Future<bool> _verifyForAction(
   BuildContext context,
   AppDataProvider provider,
   PasswordAction action,
-  String message,
-) async {
-  if (!await ensureIdentityForAction(context, action: '此操作')) return false;
+  String message, {
+  bool requireIdentity = true,
+}) async {
+  if (requireIdentity &&
+      !await ensureIdentityForAction(context, action: '此操作')) {
+    return false;
+  }
   if (!context.mounted) return false;
   return ensurePasswordForAction(
     context,
