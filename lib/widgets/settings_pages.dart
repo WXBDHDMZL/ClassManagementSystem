@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.10.0
+ * 版本 (Version): V4.11.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -52,12 +52,12 @@ import '../services/operation_log_service.dart';
 import '../services/security_service.dart';
 import '../services/statistics_service.dart';
 import '../services/update_check_service.dart';
-import '../services/update_launcher.dart';
 import '../utils/file_names.dart';
 import 'confirm_destructive.dart';
 import 'password_action_guard.dart';
 import 'password_prompt_dialog.dart';
 import 'text_prompt_dialog.dart';
+import 'update_available_dialog.dart';
 import 'weather_city_dialog.dart';
 import '../services/transfer_service.dart';
 import 'change_password_dialog.dart';

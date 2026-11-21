@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.10.0
+ * 版本 (Version): V4.11.0
  * 创建日期 (Created): 2026-10-01
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -21,10 +21,10 @@ class AppVersion {
   const AppVersion._();
 
   /// 展示用版本号（如 V2.25.2）。
-  static const String version = 'V4.10.0';
+  static const String version = 'V4.11.0';
 
   /// pubspec.yaml 中的 version 字段（便于发布脚本核对）。
-  static const String pubspecVersion = '4.10.0+171';
+  static const String pubspecVersion = '4.11.0+172';
 
   /// 公开源码地址。
   static const String sourceCodeUrl =

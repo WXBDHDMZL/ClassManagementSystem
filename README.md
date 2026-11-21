@@ -2,7 +2,7 @@
 
 **Class Management System** · 面向班主任的本地优先班级记录与统计工具
 
-**V4.10.0** · Windows 10/11 · AGPL-3.0-only
+**V4.11.0** · Windows 10/11 · AGPL-3.0-only
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows)](https://github.com/WXBDHDMZL/ClassManagementSystem/releases)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44-02569B?logo=flutter)](https://flutter.dev)

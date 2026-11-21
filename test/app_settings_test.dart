@@ -138,6 +138,21 @@ void main() {
     );
   });
 
+  test('跳过的更新版本可持久化，旧数据缺字段为空', () {
+    final settings = AppSettings(
+      themeMode: ThemeModeType.system,
+      skippedUpdateTag: 'v4.11.0',
+    );
+    expect(
+      AppSettings.fromJson(settings.toJson()).skippedUpdateTag,
+      'v4.11.0',
+    );
+    expect(
+      AppSettings.fromJson(const <String, dynamic>{}).skippedUpdateTag,
+      isEmpty,
+    );
+  });
+
   test('悬浮球位置锁定默认关闭，并完整往返', () {
     final defaults = AppSettings(themeMode: ThemeModeType.system);
     expect(defaults.ballPositionLocked, isFalse);

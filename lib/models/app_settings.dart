@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.10.0
+ * 版本 (Version): V4.11.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -186,6 +186,9 @@ class AppSettings {
   /// 启动时是否自动检查 GitHub 上的正式发布版本（默认开启）。
   final bool checkUpdateOnStartup;
 
+  /// 用户选择“跳过此版本”时记录的版本号（空表示没有跳过）。
+  final String skippedUpdateTag;
+
   /// 是否启用“操作身份”：默认关闭；关闭时隐藏身份入口、不写记录人。
   final bool identityFeatureEnabled;
 
@@ -266,6 +269,7 @@ class AppSettings {
     this.showWeather = false,
     this.studentSearchEnabled = true,
     this.checkUpdateOnStartup = true,
+    this.skippedUpdateTag = '',
     this.identityFeatureEnabled = false,
     this.identities = Identity.defaults,
     this.identityIdleMinutes = defaultIdentityIdleMinutes,
@@ -394,6 +398,7 @@ class AppSettings {
     bool? showWeather,
     bool? studentSearchEnabled,
     bool? checkUpdateOnStartup,
+    String? skippedUpdateTag,
     bool? identityFeatureEnabled,
     List<Identity>? identities,
     int? identityIdleMinutes,
@@ -460,6 +465,7 @@ class AppSettings {
           studentSearchEnabled ?? this.studentSearchEnabled,
       checkUpdateOnStartup:
           checkUpdateOnStartup ?? this.checkUpdateOnStartup,
+      skippedUpdateTag: skippedUpdateTag ?? this.skippedUpdateTag,
       identityFeatureEnabled:
           identityFeatureEnabled ?? this.identityFeatureEnabled,
       identities: identities ?? this.identities,
@@ -528,6 +534,7 @@ class AppSettings {
       'showWeather': showWeather,
       'studentSearchEnabled': studentSearchEnabled,
       'checkUpdateOnStartup': checkUpdateOnStartup,
+      'skippedUpdateTag': skippedUpdateTag,
       'identityFeatureEnabled': identityFeatureEnabled,
       'identities': [for (final identity in identities) identity.toJson()],
       'identityIdleMinutes': identityIdleMinutes,
@@ -627,6 +634,7 @@ class AppSettings {
       showWeather: json['showWeather'] == true,
       studentSearchEnabled: json['studentSearchEnabled'] != false,
       checkUpdateOnStartup: json['checkUpdateOnStartup'] != false,
+      skippedUpdateTag: (json['skippedUpdateTag'] ?? '').toString(),
       identityFeatureEnabled: json['identityFeatureEnabled'] == true,
       identities: _parseIdentities(json['identities']),
       identityIdleMinutes:

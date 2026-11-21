@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.10.0
+ * 版本 (Version): V4.11.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -38,6 +38,7 @@ import './widgets/app_notification.dart';
 import './widgets/identity_guard.dart';
 import './widgets/password_action_guard.dart';
 import './widgets/settings_panel.dart';
+import './widgets/update_prompt_host.dart';
 import './constants/app_theme.dart';
 import './models/app_settings.dart';
 import 'utils/day_rollover.dart';
@@ -277,7 +278,7 @@ class _MyAppState extends State<MyApp> {
         ThemeModeType.dark => ThemeMode.dark,
         ThemeModeType.system => ThemeMode.system,
       },
-        home: const _RootPage(),
+        home: const UpdatePromptHost(child: _RootPage()),
       ),
     );
   }

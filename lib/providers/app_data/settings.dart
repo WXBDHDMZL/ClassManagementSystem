@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.10.0
+ * 版本 (Version): V4.11.0
  * 创建日期 (Created): 2026-07-25
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -474,6 +474,16 @@ mixin _SettingsDomain on _ProviderBase {
     if (settings.checkUpdateOnStartup == enabled) return;
     _appData.settings = settings.copyWith(checkUpdateOnStartup: enabled);
     _log('启动检查更新', enabled ? '已开启' : '已关闭');
+    _save();
+  }
+
+  /// 记录用户选择跳过的版本；传空串表示清除。
+  void setSkippedUpdateTag(String tag) {
+    final settings = _appData.settings;
+    final next = tag.trim();
+    if (settings.skippedUpdateTag == next) return;
+    _appData.settings = settings.copyWith(skippedUpdateTag: next);
+    _log('跳过更新', next.isEmpty ? '已清除' : next);
     _save();
   }
 
