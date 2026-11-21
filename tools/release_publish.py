@@ -15,8 +15,7 @@
 打包、不会覆盖已有资产；同名资产已存在时直接报错退出。
 
 用法：
-    set GITHUB_TOKEN=...
-    python tools/release_publish.py            # 上传当前版本
+    python tools/release_publish.py            # 上传当前版本（优先读 GITHUB_TOKEN，其次读 Windows 凭据管理器）
     python tools/release_publish.py --dry-run  # 只检查资产与远端状态
 """
 from __future__ import annotations
@@ -25,6 +24,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -89,6 +89,24 @@ def request(
             return error.code, body
 
 
+def system_credential() -> str:
+    """从 Windows 凭据管理器读取 github.com 凭据（与 git push 使用同一来源）。"""
+    try:
+        completed = subprocess.run(
+            ["git", "-c", "credential.helper=wincred", "credential", "fill"],
+            input="protocol=https\nhost=github.com\n\n",
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        for line in (completed.stdout or "").splitlines():
+            if line.startswith("password="):
+                return line.split("=", 1)[1].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="上传安装包与校验文件到 GitHub Release")
     parser.add_argument("--dry-run", action="store_true", help="只检查，不实际创建/上传")
@@ -115,13 +133,17 @@ def main() -> int:
         return 1
     say(f"[OK] 资产校验通过：{asset_name}（{asset.stat().st_size} bytes，sha256 {actual[:16]}…）")
 
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+    token = (
+        os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or system_credential()
+    )
     if not token:
         if args.dry_run:
-            say("[DRY] 未设置 GITHUB_TOKEN；仅做本地资产校验，不访问远端")
+            say("[DRY] 未找到 GitHub 凭据；仅做本地资产校验，不访问远端")
             say(f"[DRY] 将创建/更新 Release {tag} 并上传 {asset_name} + .sha256")
             return 0
-        say("[FAIL] 未设置 GITHUB_TOKEN（需要该仓库的 Contents: Read and write 权限）")
+        say("[FAIL] 未找到 GitHub 凭据（可设置 GITHUB_TOKEN，或先让 git 记住 github.com 凭据）")
         return 1
 
     status, body = request("GET", f"{API}/repos/{OWNER}/{REPO}/releases/tags/{tag}", token)
