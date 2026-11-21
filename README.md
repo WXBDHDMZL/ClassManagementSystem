@@ -2,7 +2,7 @@
 
 **Class Management System** · 面向班主任的本地优先班级记录与统计工具
 
-**V4.11.0** · Windows 10/11 · AGPL-3.0-only
+**V4.12.0** · Windows 10/11 · AGPL-3.0-only
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows)](https://github.com/WXBDHDMZL/ClassManagementSystem/releases)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44-02569B?logo=flutter)](https://flutter.dev)
@@ -41,6 +41,7 @@
 - 按当前时刻自动预选就餐、早读、上课、午休、晚修等时段，时段名称与时间范围可自定义。
 - 新增、修改或删除成功后可在提示中撤销最近一次变更，减少误操作。
 - 主页支持按姓名实时搜索，学生较多时也能快速定位。
+- 名单支持从 Excel、CSV、文本或 Word 导入，也可以直接粘贴姓名。
 - 历史记录支持多日期查询、跨日期补齐与按学生筛选。
 
 ### 统计与导出
