@@ -2,6 +2,8 @@
 
 **Class Management System** · 面向班主任的本地优先班级记录与统计工具
 
+**V4.10.0** · Windows 10/11 · AGPL-3.0-only
+
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows)](https://github.com/WXBDHDMZL/ClassManagementSystem/releases)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44-02569B?logo=flutter)](https://flutter.dev)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE.txt)
@@ -165,7 +167,7 @@ build.bat
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\installer.iss
 ```
 
-安装包输出到 `installer\output\`。安装包只包含程序文件，不包含任何班级数据。
+安装包输出到 `installer\output\`，文件名形如 `班级管理系统_安装包_v<版本>.exe`。安装包只包含程序文件，不包含任何班级数据。
 
 ## 参与贡献
 
