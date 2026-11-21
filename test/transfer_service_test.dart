@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:excel/excel.dart' as excel;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -23,6 +24,41 @@ void main() {
     );
 
     expect(names, ['张三', '李四', '王五']);
+  });
+
+  test('名单解析：openpyxl/WPS 的绝对路径工作表也能读取', () {
+    const workbookXml =
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheets><sheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'name="Sheet" sheetId="1" r:id="rId1"/></sheets></workbook>';
+    const relsXml =
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="/xl/worksheets/sheet1.xml"/></Relationships>';
+    const sheetXml =
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>姓名</t></is></c></row>'
+        '<row r="2"><c r="A2" t="inlineStr"><is><t>张三</t></is></c></row>'
+        '<row r="3"><c r="A3" t="inlineStr"><is><t>李四</t></is></c></row>'
+        '</sheetData></worksheet>';
+    final archive = Archive();
+    void add(String name, String text) {
+      final data = utf8.encode(text);
+      archive.addFile(ArchiveFile(name, data.length, data));
+    }
+
+    add('xl/workbook.xml', workbookXml);
+    add('xl/_rels/workbook.xml.rels', relsXml);
+    add('xl/worksheets/sheet1.xml', sheetXml);
+    final rows = TransferService.readRows(
+      ZipEncoder().encode(archive)!,
+      isCsv: false,
+      headerKeywords: const {'姓名'},
+    );
+    expect(TransferService.parseStudentsRows(rows), ['张三', '李四']);
   });
 
   test('名单解析：没有表头时取第一列，忽略空行与重复', () {

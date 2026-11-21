@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.12.0
+ * 版本 (Version): V4.12.1
  * 创建日期 (Created): 2026-11-21
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -19,6 +19,7 @@ import 'package:xml/xml.dart';
 
 import '../providers/app_data_provider.dart';
 import 'transfer_service.dart';
+import 'xlsx_reader.dart';
 
 /// 名单导入来源。
 enum StudentImportSource { paste, textFile, tableFile, wordFile }
@@ -48,14 +49,7 @@ class StudentImportPreview {
 /// 只做解析与校验，不写数据；写入由界面确认后调用 provider。
 class StudentImportService {
   static const Set<String> _nameHeaders = {'姓名', '学生姓名', '名字', '学生'};
-  static const Set<String> _otherHeaders = {
-    '序号',
-    '学号',
-    '性别',
-    '班级',
-    '备注',
-    '编号',
-  };
+  static const Set<String> _otherHeaders = {'序号', '学号', '性别', '班级', '备注', '编号'};
   static const int _maxScanRows = 10;
 
   /// 解析粘贴文本或 TXT 文本。
@@ -117,11 +111,19 @@ class StudentImportService {
           );
           return _fromRows(rows, StudentImportSource.tableFile);
         case 'xlsx':
-          final rows = await TransferService.readRowsAsync(
-            bytes,
-            isCsv: false,
-            headerKeywords: _nameHeaders,
-          );
+          var rows = const <List<String>>[];
+          try {
+            rows = await TransferService.readRowsAsync(
+              bytes,
+              isCsv: false,
+              headerKeywords: _nameHeaders,
+            );
+          } on Object {
+            rows = const <List<String>>[];
+          }
+          if (rows.isEmpty) {
+            rows = await Isolate.run(() => _parseXlsxRows(bytes));
+          }
           return _fromRows(rows, StudentImportSource.tableFile);
         case 'docx':
           final rows = await Isolate.run(() => _parseDocxRows(bytes));
@@ -229,8 +231,7 @@ class StudentImportService {
     final raw = <String>[];
     // Word 常见结构：表格前先写几段姓名。若表头之前的行都是单格段落，
     // 这些段落也是名单内容，不能因为后面的表格表头而丢掉。
-    if (headerRow > 0 &&
-        rows.take(headerRow).every((row) => row.length == 1)) {
+    if (headerRow > 0 && rows.take(headerRow).every((row) => row.length == 1)) {
       for (var i = 0; i < headerRow; i++) {
         raw.add(rows[i].first);
       }
@@ -365,12 +366,13 @@ class StudentImportService {
     final rows = <List<String>>[];
     for (final node in body.children.whereType<XmlElement>()) {
       if (node.name.local == 'p') {
+        if (_isHeadingParagraph(node)) continue;
         final text = _paragraphText(node);
         if (text.trim().isNotEmpty) rows.add([text]);
       } else if (node.name.local == 'tbl') {
-        for (final row in node.descendants
-            .whereType<XmlElement>()
-            .where((element) => element.name.local == 'tr')) {
+        for (final row in node.descendants.whereType<XmlElement>().where(
+          (element) => element.name.local == 'tr',
+        )) {
           final cells = row.children
               .whereType<XmlElement>()
               .where((element) => element.name.local == 'tc')
@@ -383,11 +385,32 @@ class StudentImportService {
     return rows;
   }
 
+  static List<List<String>> _parseXlsxRows(List<int> bytes) =>
+      XlsxReader.readRows(bytes);
+
+  static bool _isHeadingParagraph(XmlElement paragraph) {
+    for (final style in paragraph.descendants.whereType<XmlElement>().where(
+      (node) => node.name.local == 'pStyle',
+    )) {
+      String value = '';
+      for (final attribute in style.attributes) {
+        if (attribute.name.local == 'val') value = attribute.value;
+      }
+      final lower = value.toLowerCase();
+      if (lower.contains('heading') ||
+          lower.contains('title') ||
+          lower.contains('标题')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static String _paragraphText(XmlElement element) {
     final buffer = StringBuffer();
-    for (final text in element.descendants
-        .whereType<XmlElement>()
-        .where((node) => node.name.local == 't')) {
+    for (final text in element.descendants.whereType<XmlElement>().where(
+      (node) => node.name.local == 't',
+    )) {
       buffer.write(text.innerText);
     }
     return buffer.toString().trim();

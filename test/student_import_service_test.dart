@@ -133,6 +133,40 @@ void main() {
       expect(preview.names, ['张三', '李四', '王五']);
     });
 
+    test('XLSX 绝对路径关系（openpyxl/WPS 风格）', () async {
+      const workbookXml =
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<sheets><sheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+          'name="Sheet" sheetId="1" r:id="rId1"/></sheets></workbook>';
+      const relsXml =
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+          'Target="/xl/worksheets/sheet1.xml"/></Relationships>';
+      const sheetXml =
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+          '<row r="1"><c r="A1" t="inlineStr"><is><t>姓名</t></is></c></row>'
+          '<row r="2"><c r="A2" t="inlineStr"><is><t>张三</t></is></c></row>'
+          '<row r="3"><c r="A3" t="inlineStr"><is><t>李四</t></is></c></row>'
+          '</sheetData></worksheet>';
+      final archive = Archive();
+      void add(String name, String text) {
+        final data = utf8.encode(text);
+        archive.addFile(ArchiveFile(name, data.length, data));
+      }
+
+      add('xl/workbook.xml', workbookXml);
+      add('xl/_rels/workbook.xml.rels', relsXml);
+      add('xl/worksheets/sheet1.xml', sheetXml);
+      final preview = await StudentImportService.parseFile(
+        bytes: ZipEncoder().encode(archive)!,
+        fileName: '名单.xlsx',
+      );
+      expect(preview.names, ['张三', '李四']);
+    });
+
     test('不支持 .xls', () async {
       final preview = await StudentImportService.parseFile(
         bytes: Uint8List.fromList([1, 2, 3]),

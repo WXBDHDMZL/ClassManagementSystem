@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.12.0
+ * 版本 (Version): V4.12.1
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -20,6 +20,7 @@ import '../utils/app_date.dart';
 import '../utils/record_text.dart';
 import 'statistics_service.dart';
 import '../utils/app_clock.dart';
+import 'xlsx_reader.dart';
 
 /// 导入预览结果：可导入的记录 + 供用户确认的统计信息。
 class ImportPreview {
@@ -96,13 +97,22 @@ class ImportService {
     List<Map<String, String>>? periods,
   }) {
     try {
-      final workbook = excel.Excel.decodeBytes(bytes);
-      for (final name in workbook.tables.keys) {
-        final sheet = workbook.tables[name]!;
-        final rows = <List<String>>[];
-        for (final row in sheet.rows) {
-          rows.add(row.map((cell) => _cellText(cell?.value)).toList());
-        }
+      late List<List<List<String>>> sheets;
+      try {
+        final workbook = excel.Excel.decodeBytes(bytes);
+        sheets = [
+          for (final name in workbook.tables.keys)
+            [
+              for (final row in workbook.tables[name]!.rows)
+                row.map((cell) => _cellText(cell?.value)).toList(),
+            ],
+        ];
+      } on Object {
+        final rows = XlsxReader.readRows(bytes);
+        if (rows.isEmpty) rethrow;
+        sheets = [rows];
+      }
+      for (final rows in sheets) {
         if (_findHeaderRow(rows) == null) continue;
         return _buildFromRows(rows, existing, periods);
       }

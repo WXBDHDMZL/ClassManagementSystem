@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.12.0
+ * 版本 (Version): V4.12.1
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -24,6 +24,7 @@ import '../models/reason_library.dart';
 import '../models/student_record.dart';
 import 'import_service.dart';
 import 'excel_export.dart';
+import 'xlsx_reader.dart';
 
 /// 考勤状态导入行：状态名称、是否计为未到、同步的批评原因。
 class AttendanceStatusImportRow {
@@ -124,15 +125,22 @@ class TransferService {
     if (isCsv) {
       return ImportService.parseCsvRows(decodeCsv(bytes));
     }
-    final workbook = excel.Excel.decodeBytes(bytes);
-    if (workbook.tables.isEmpty) return const [];
-    final sheets = <List<List<String>>>[
-      for (final name in workbook.tables.keys)
-        [
-          for (final row in workbook.tables[name]!.rows)
-            [for (final cell in row) ImportService.cellTextOf(cell?.value)],
-        ],
-    ];
+    late List<List<List<String>>> sheets;
+    try {
+      final workbook = excel.Excel.decodeBytes(bytes);
+      if (workbook.tables.isEmpty) return const [];
+      sheets = <List<List<String>>>[
+        for (final name in workbook.tables.keys)
+          [
+            for (final row in workbook.tables[name]!.rows)
+              [for (final cell in row) ImportService.cellTextOf(cell?.value)],
+          ],
+      ];
+    } on Object {
+      final rows = XlsxReader.readRows(bytes);
+      if (rows.isEmpty) rethrow;
+      sheets = [rows];
+    }
     if (headerKeywords.isNotEmpty) {
       for (final rows in sheets) {
         final limit = rows.length < 10 ? rows.length : 10;
