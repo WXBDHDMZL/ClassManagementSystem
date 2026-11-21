@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.12.1
+ * 版本 (Version): V4.13.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -86,6 +86,23 @@ class _PeriodSettingsPageState extends State<PeriodSettingsPage> {
     final removed = _rows.removeAt(index);
     removed.controller.dispose();
     setState(() {});
+  }
+
+  Future<void> _import() async {
+    final periods = await PeriodImportDialog.show(context);
+    if (!mounted || periods == null) return;
+    final oldRows = List<_PeriodRow>.from(_rows);
+    for (final row in oldRows) {
+      row.controller.dispose();
+    }
+    _rows
+      ..clear()
+      ..addAll([
+        for (final item in periods)
+          _PeriodRow(item['key']!, item['label']!),
+      ]);
+    setState(() {});
+    showTopSnackBar(context, '已填入时段列表，点击保存后生效');
   }
 
   Future<void> _save() async {
@@ -187,6 +204,12 @@ class _PeriodSettingsPageState extends State<PeriodSettingsPage> {
           onPressed: _add,
           icon: const Icon(Icons.add, size: 16),
           label: const Text('新增时段'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _import,
+          icon: const Icon(Icons.upload_file, size: 16),
+          label: const Text('导入时段'),
         ),
         const SizedBox(height: 14),
         Row(

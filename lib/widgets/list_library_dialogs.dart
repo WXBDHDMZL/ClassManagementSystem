@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.12.1
+ * 版本 (Version): V4.13.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'text_prompt_dialog.dart';
 import 'confirm_destructive.dart';
 import 'student_import_dialog.dart';
+import 'reason_import_dialog.dart';
 import 'package:provider/provider.dart';
 import '../constants/attendance_feature.dart';
 import '../providers/app_data_provider.dart';
@@ -515,6 +516,11 @@ class _ReasonManageDialogState extends State<ReasonManageDialog> {
               const SizedBox(height: 12),
               Row(
                 children: [
+                  TextButton.icon(
+                    onPressed: () => ReasonImportDialog.show(context),
+                    icon: const Icon(Icons.upload_file, size: 16),
+                    label: const Text('导入原因'),
+                  ),
                   TextButton.icon(
                     onPressed: () => _reset(provider),
                     icon: const Icon(Icons.restore, size: 16),

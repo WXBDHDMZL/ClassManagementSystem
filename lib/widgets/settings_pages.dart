@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V4.12.1
+ * 版本 (Version): V4.13.0
  * 创建日期 (Created): 2026-07-25 
  * 
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
@@ -66,6 +66,7 @@ import 'identity_guard.dart';
 import 'list_library_dialogs.dart';
 import 'import_records_dialog.dart';
 import 'operation_log_dialog.dart';
+import 'period_import_dialog.dart';
 import 'record_list.dart';
 import 'settings_widgets.dart';
 import 'terms_of_service.dart';
