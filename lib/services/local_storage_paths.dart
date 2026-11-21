@@ -34,9 +34,19 @@ class LocalStoragePaths {
   static const String dataFileName = 'class_management_data.enc';
   static const String authGuardFileName = 'class_management_auth_guard.json';
 
+  /// 数据根目录的环境变量入口，供发布验收在沙箱中启动真实程序。
+  ///
+  /// 未设置时行为与以前完全一致（使用系统“文档”目录）。
+  static const String dataDirectoryEnvironmentVariable = 'CMS_DATA_DIR';
+
   static Future<Directory> _documents({String? documentsDirectory}) async {
     if (documentsDirectory != null && documentsDirectory.isNotEmpty) {
       return Directory(documentsDirectory);
+    }
+    final override =
+        Platform.environment[dataDirectoryEnvironmentVariable]?.trim();
+    if (override != null && override.isNotEmpty) {
+      return Directory(override);
     }
     return getApplicationDocumentsDirectory();
   }
