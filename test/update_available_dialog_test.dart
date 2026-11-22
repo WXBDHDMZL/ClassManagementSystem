@@ -18,7 +18,8 @@ GitHubReleaseInfo _release({bool withInstaller = true}) {
   return GitHubReleaseInfo(
     tagName: 'v4.11.0',
     title: 'V4.11.0',
-    notes: '# 版本内容示例\n\n- 新增名单导入\n- **修复** 统计细节',
+    notes:
+        '# 版本内容示例\n\n## 主要变化\n\n- 新增名单导入\n- **修复** 统计细节\n\n## 升级说明\n\n- 这段升级说明不应出现在版本内容里',
     assets: [
       if (withInstaller)
         GitHubAsset(
@@ -74,6 +75,7 @@ void main() {
     expect(find.text('版本内容'), findsOneWidget);
     expect(find.textContaining('新增名单导入'), findsOneWidget);
     expect(find.textContaining('修复 统计细节'), findsOneWidget);
+    expect(find.textContaining('这段升级说明'), findsNothing);
     expect(
       find.textContaining('ClassManagementSystem_Setup_v4.11.0.exe'),
       findsOneWidget,

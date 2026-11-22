@@ -21,6 +21,7 @@ import '../providers/app_data_provider.dart';
 import '../services/desktop_service.dart';
 import '../services/github_update_service.dart';
 import '../services/update_launcher.dart';
+import '../utils/release_notes.dart';
 import 'app_notification.dart';
 
 /// 更新弹窗的操作结果。
@@ -219,6 +220,7 @@ class _UpdateAvailableDialog extends StatelessWidget {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
     final asset = release.installerAsset;
+    final visibleNotes = ReleaseNotes.forApp(release.notes);
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       contentPadding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
@@ -290,7 +292,7 @@ class _UpdateAvailableDialog extends StatelessWidget {
                 style: theme.textTheme.bodySmall?.copyWith(color: muted),
               ),
             ],
-            if (release.notes.trim().isNotEmpty) ...[
+            if (visibleNotes.isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
                 '版本内容',
@@ -311,7 +313,7 @@ class _UpdateAvailableDialog extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: SingleChildScrollView(
-                  child: _ReleaseNotesText(notes: release.notes),
+                  child: _ReleaseNotesText(notes: visibleNotes),
                 ),
               ),
             ],
