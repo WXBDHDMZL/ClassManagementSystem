@@ -36,7 +36,7 @@ void main() {
     expect(TransferService.parsePackage(raw), isNull);
   });
 
-  testWidgets('更新弹窗不得渲染 Release Notes 的更新说明', (tester) async {
+  testWidgets('更新弹窗渲染 Release Notes 的版本内容', (tester) async {
     final release = GitHubReleaseInfo(
       tagName: 'v4.14.0',
       title: 'V4.14.0',
@@ -73,8 +73,9 @@ void main() {
     await tester.tap(find.text('打开更新提示'));
     await tester.pumpAndSettle();
 
-    expect(find.text('版本内容'), findsNothing);
-    expect(find.textContaining('此前会出现'), findsNothing);
+    expect(find.text('版本内容'), findsOneWidget);
+    expect(find.textContaining('此前会出现'), findsOneWidget);
+    expect(find.textContaining('旧数据无需迁移'), findsOneWidget);
   });
 
   test('未授权时不得改写管理密码哈希', () {

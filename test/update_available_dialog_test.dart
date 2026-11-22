@@ -42,7 +42,7 @@ void main() {
   setUp(UpdateCheckService.resetForTest);
   tearDown(UpdateCheckService.resetForTest);
 
-  testWidgets('更新弹窗显示版本和三个操作，不渲染发布正文', (tester) async {
+  testWidgets('更新弹窗显示版本、版本内容和三个操作', (tester) async {
     late UpdateAvailableAction? action;
     await tester.pumpWidget(
       testApp(
@@ -71,8 +71,9 @@ void main() {
     expect(find.text(AppVersion.version), findsOneWidget);
     expect(find.text('可用版本'), findsOneWidget);
     expect(find.text('v4.11.0'), findsOneWidget);
-    expect(find.text('版本内容'), findsNothing);
-    expect(find.textContaining('新增名单导入'), findsNothing);
+    expect(find.text('版本内容'), findsOneWidget);
+    expect(find.textContaining('新增名单导入'), findsOneWidget);
+    expect(find.textContaining('修复 统计细节'), findsOneWidget);
     expect(
       find.textContaining('ClassManagementSystem_Setup_v4.11.0.exe'),
       findsOneWidget,

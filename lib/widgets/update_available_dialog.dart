@@ -290,6 +290,31 @@ class _UpdateAvailableDialog extends StatelessWidget {
                 style: theme.textTheme.bodySmall?.copyWith(color: muted),
               ),
             ],
+            if (release.notes.trim().isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Text(
+                '版本内容',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                constraints: const BoxConstraints(maxHeight: 220),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.35,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SingleChildScrollView(
+                  child: _ReleaseNotesText(notes: release.notes),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -311,6 +336,105 @@ class _UpdateAvailableDialog extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// 把 GitHub Release 正文按轻量 Markdown 呈现为可滚动文本。
+///
+/// 只处理标题、列表与 **加粗**，不引入 Markdown 依赖；未知语法原样显示。
+class _ReleaseNotesText extends StatelessWidget {
+  const _ReleaseNotesText({required this.notes});
+
+  final String notes;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final base = theme.textTheme.bodySmall?.copyWith(
+      height: 1.55,
+      color: theme.colorScheme.onSurface,
+    );
+    final children = <Widget>[];
+    final normalized = notes.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    for (final raw in normalized.split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty) {
+        children.add(const SizedBox(height: 5));
+        continue;
+      }
+      final heading = RegExp(r'^(#{1,3})\s+(.+)$').firstMatch(line);
+      if (heading != null) {
+        final level = heading.group(1)!.length;
+        children.add(
+          Padding(
+            padding: EdgeInsets.only(
+              top: children.isEmpty ? 0 : 6,
+              bottom: 2,
+            ),
+            child: Text(
+              heading.group(2)!.trim(),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                fontSize: level == 1 ? 14 : 13,
+              ),
+            ),
+          ),
+        );
+        continue;
+      }
+      final bullet = RegExp(r'^[-*]\s+(.+)$').firstMatch(line);
+      if (bullet != null) {
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('•  ', style: base),
+                Expanded(child: _richLine(bullet.group(1)!.trim(), base)),
+              ],
+            ),
+          ),
+        );
+        continue;
+      }
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: _richLine(line, base),
+        ),
+      );
+    }
+    while (children.isNotEmpty && children.last is SizedBox) {
+      children.removeLast();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    );
+  }
+
+  Widget _richLine(String text, TextStyle? style) {
+    final spans = <TextSpan>[];
+    final pattern = RegExp(r'\*\*(.+?)\*\*');
+    var start = 0;
+    for (final match in pattern.allMatches(text)) {
+      if (match.start > start) {
+        spans.add(TextSpan(text: text.substring(start, match.start)));
+      }
+      spans.add(
+        TextSpan(
+          text: match.group(1),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+      );
+      start = match.end;
+    }
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start)));
+    }
+    return Text.rich(TextSpan(style: style, children: spans));
   }
 }
 
