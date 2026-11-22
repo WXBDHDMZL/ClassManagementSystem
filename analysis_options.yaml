@@ -1,0 +1,44 @@
+# This file configures the analyzer, which statically analyzes Dart code to
+# check for errors, warnings, and lints.
+#
+# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
+# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
+# invoked from the command line by running `flutter analyze`.
+
+# The following line activates a set of recommended lints for Flutter apps,
+# packages, and plugins designed to encourage good coding practices.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+
+linter:
+  # The lint rules applied to this project can be customized in the
+  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
+  # included above or to enable additional rules. A list of all available lints
+  # and their documentation is published at https://dart.dev/lints.
+  #
+  # Instead of disabling a lint rule for the entire project in the
+  # section below, it can also be suppressed for a single line of code
+  # or a specific dart file by using the `// ignore: name_of_lint` and
+  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
+  # producing the lint.
+  rules:
+    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
+    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+
+    # G-56（2026-10-04 审查）：未 await 的 Future 必须显式 `unawaited(...)` ——
+    # 否则"忘了 await"的异步调用会静默丢错，且无法与"故意不等待"区分。
+    # 注：未启用 avoid_slow_async_io（会与 G-40 的 sync→async 迁移方向冲突）。
+    unawaited_futures: true
+
+    # 审查 M12（2026-10-05）：补开启零成本的护栏规则 ——
+    # 项目已达成 0 处 print、统一单引号、const 构造，打开以锁死成果防回归。
+    avoid_print: true             # 调试输出只走 debugPrint / 日志服务
+    prefer_single_quotes: true    # 文案统一单引号（中文文案内出现双引号除外）
+    prefer_const_constructors: true
+    avoid_relative_lib_imports: true  # test/ 等库外文件不得相对 import lib/ 内部
+
+# Additional information about this file can be found at
+# https://dart.dev/guides/language/analysis-options

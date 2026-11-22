@@ -1,0 +1,48 @@
+{
+  "comment": "commit=核心域冒烟；slow=full 中较慢但必须保留的 suite。fast 会按改动图追加选中测试。",
+  "commit_core": [
+    "test/app_clock_test.dart",
+    "test/app_data_provider_test.dart",
+    "test/storage_service_test.dart",
+    "test/storage_crypto_test.dart",
+    "test/storage_legacy_format_test.dart",
+    "test/backup_restore_test.dart",
+    "test/backup_portable_test.dart",
+    "test/security_service_test.dart",
+    "test/management_password_test.dart",
+    "test/provider_action_gate_test.dart",
+    "test/operation_identity_auth_test.dart",
+    "test/import_service_test.dart",
+    "test/transfer_service_test.dart",
+    "test/import_batch1_test.dart",
+    "test/record_undo_test.dart",
+    "test/records_attendance_sync_test.dart",
+    "test/record_management_flow_test.dart",
+    "test/github_update_service_test.dart",
+    "test/update_check_service_test.dart",
+    "test/f1_regressions_test.dart",
+    "test/f2_regressions_test.dart",
+    "test/f4_regressions_test.dart",
+    "test/f5_regressions_test.dart",
+    "test/daily_flow_test.dart",
+    "test/desktop_service_test.dart",
+    "test/widget_test.dart"
+  ],
+  "slow": [
+    "test/update_available_dialog_test.dart",
+    "test/security_management_password_test.dart",
+    "test/daily_export_test.dart",
+    "test/backup_portable_test.dart",
+    "test/change_password_dialog_test.dart",
+    "test/ball_quick_record_test.dart",
+    "test/attendance_sync_ui_test.dart",
+    "test/settings_pages_smoke_test.dart",
+    "test/security_settings_test.dart"
+  ],
+  "fast_fallback": [
+    "test/app_data_provider_test.dart",
+    "test/storage_service_test.dart",
+    "test/security_service_test.dart"
+  ]
+}
+
