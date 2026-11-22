@@ -1,14 +1,14 @@
 # AI_HANDOFF
 > 跨 AI 窗口的唯一共享记忆。每次会话结束必须更新（≤40 行）。开始会话先读本文件 + `AI_RULES.md` + `git status`。
 更新时间：2026-11-22
-当前状态：V5.0.1 发布准备中（版本 5.0.1+186，基于 V5.0.0 的更新弹窗内容过滤修复）。
+当前状态：V5.0.1 已发布（2026-11-22），版本 5.0.1+186，基于 V5.0.0 的更新弹窗内容过滤修复。
 支持边界：V5 只支持 V4.14.1 写出的 LRX3 数据；V4.13 及更早的 LRX2、旧目录、旧日志、旧备份、旧密码、旧包全部不支持。旧格式只做“识别并明确拒绝”，不迁移、不隔离、不生成空库。
 验证基线：全量 774 通过（本次 `flutter test`）；`flutter analyze` 通过；`check_rules` 69/72、`ui_copy_check`、`check_version`、`stamp_version` 通过。
 本次改动：
 1. `lib/utils/release_notes.dart` 新增 `ReleaseNotes.forApp`：优先 `<!-- app:start/end -->`，否则取“主要变化/新功能/修复内容/改进与修复”章节。
 2. 更新弹窗只显示上述过滤后的内容，不再显示升级说明、发布资产等无关段落。
 3. 版本升至 5.0.1+186，新增 `更新/更新内容_V5.0.1.md`。
-发布结果：待构建/验收后填写。
+发布结果：`v5.0.1` tag 与 Release 指向 `b73c49b`；资产 `ClassManagementSystem_Setup_v5.0.1.exe`（29,851,436 B，sha256 `3c93294d…`）+ `.sha256` + `.sig` + `UpdateNotes_V1.0.0-V5.0.1.zip`。
 工具：`migrate_lrx2.exe` 与源码仅保留在 `D:/Projects/Programs/_audit_backups/migrate_tool/`，不随仓库、安装包或 Release 分发。
 已知坑：
 - 旧 LRX2 用户必须先留在 4.x 或导出数据重建；V5 不提供迁移入口。
