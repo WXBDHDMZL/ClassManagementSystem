@@ -77,6 +77,15 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   // 审计 F1-4：只删除程序自写的 Run 值，不在安装时创建空值。
   if CurUninstallStep = usPostUninstall then
+  begin
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
       'ClassManagementSystem');
+    // 审计 A-26：卸载只移除程序文件，班级数据与备份仍留在文档目录。必须
+    // 明确告知，否则用户会以为数据随程序一起被删除；静默卸载不弹窗。
+    if not UninstallSilent then
+      MsgBox('程序文件已卸载，你的班级数据与备份仍保留在：' + #13#10 +
+             ExpandConstant('{userdocs}\班级管理系统') + #13#10 + #13#10 +
+             '如需彻底清理，请手动删除该文件夹（删除后无法恢复）。',
+             mbInformation, MB_OK);
+  end;
 end;

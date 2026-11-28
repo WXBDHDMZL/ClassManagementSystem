@@ -18,6 +18,7 @@ import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
 import '../utils/student_name.dart';
+import '../utils/utf16.dart';
 import 'import_limits.dart';
 import 'transfer_service.dart';
 import 'xlsx_reader.dart';
@@ -186,17 +187,10 @@ class StudentImportService {
     }
   }
 
-  static String _decodeUtf16(List<int> bytes, {required bool littleEndian}) {
-    final units = <int>[];
-    for (var i = 0; i + 1 < bytes.length; i += 2) {
-      units.add(
-        littleEndian
-            ? bytes[i] | (bytes[i + 1] << 8)
-            : (bytes[i] << 8) | bytes[i + 1],
-      );
-    }
-    return String.fromCharCodes(units);
-  }
+  // 审计 A-25：UTF-16 解码统一走 utils/utf16.dart，奇数字节与孤立代理项
+  // 都会被判为"文件损坏"，不再静默丢字节或写出不可见字符。
+  static String _decodeUtf16(List<int> bytes, {required bool littleEndian}) =>
+      decodeUtf16(bytes, littleEndian: littleEndian);
 
   static StudentImportPreview _fromRows(
     List<List<String>> rows,

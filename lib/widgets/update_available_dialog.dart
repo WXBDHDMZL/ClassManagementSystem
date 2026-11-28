@@ -78,7 +78,7 @@ Future<void> downloadAndInstallUpdate(
   // 先建目录：这一步在弹进度框之前完成，避免“对话框还没渲染就抛异常”
   // 留下一个 barrierDismissible=false 且没有按钮的死框（审计 P1-16）。
   final targetDir = Directory(
-    '${Directory.systemTemp.path}${Platform.pathSeparator}班级管理系统_更新',
+    GitHubUpdateService.defaultDownloadDir().path,
   );
   try {
     await targetDir.create(recursive: true);

@@ -12,6 +12,8 @@
 
 import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -213,6 +215,42 @@ class GitHubUpdateService {
       return a.build! > b.build!;
     }
     return false;
+  }
+
+  /// 更新包临时目录（下载的安装包与更新助手脚本都放在这里）。
+  static Directory defaultDownloadDir() => Directory(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}班级管理系统_更新',
+      );
+
+  /// 清理更新包临时目录里 [maxAge] 之前留下的旧安装包（审计 A-26）。
+  ///
+  /// 更新流程是"退出后由更新助手安装"，所以**不能**在下载成功时删包；
+  /// 但历史版本失败/取消后会留下几十上百 MB 的安装包没人清理。这里在启动时
+  /// 只删除明显过期的文件，返回删除数量；任何异常都不影响启动。
+  static Future<int> cleanupStaleDownloads({
+    Directory? directory,
+    Duration maxAge = const Duration(days: 7),
+    DateTime? now,
+  }) async {
+    final dir = directory ?? defaultDownloadDir();
+    var removed = 0;
+    try {
+      if (!await dir.exists()) return 0;
+      final cutoff = (now ?? DateTime.now()).subtract(maxAge);
+      await for (final entity in dir.list(followLinks: false)) {
+        try {
+          final stat = await entity.stat();
+          if (stat.modified.isAfter(cutoff)) continue;
+          await entity.delete(recursive: true);
+          removed++;
+        } on Object catch (e) {
+          debugPrint('清理旧更新包失败：$e');
+        }
+      }
+    } on Object catch (e) {
+      debugPrint('扫描更新包目录失败：$e');
+    }
+    return removed;
   }
 
   /// 下载安装包到 [targetDir]，返回本地文件。

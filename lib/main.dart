@@ -22,6 +22,7 @@ import 'package:provider/provider.dart';
 import './providers/app_data_provider.dart';
 import './services/desktop_service.dart';
 import './services/error_log_service.dart';
+import './services/github_update_service.dart';
 import './services/local_storage_paths.dart';
 import './services/security_service.dart';
 import './services/storage_service.dart';
@@ -135,6 +136,8 @@ Future<void> main() async {
   OperationLogService.log('程序启动', environmentLine());
   // 后台任务：按频率自动备份（不阻塞启动）。
   unawaited(provider.runScheduledBackup());
+  // 审计 A-26：清掉上次更新失败/取消后留在 %TEMP% 的旧安装包。
+  unawaited(GitHubUpdateService.cleanupStaleDownloads());
   // 桌面集成（系统托盘 + 关闭拦截 + 悬浮球）：初始化失败不影响主功能，
   // 窗口关闭行为回退为"直接退出程序"。
   try {

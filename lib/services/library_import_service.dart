@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../constants/time_periods.dart';
+import '../utils/utf16.dart';
 import 'transfer_service.dart';
 
 /// 原因库导入预览：解析成功的条目与无法识别的行数。
@@ -230,15 +231,7 @@ class LibraryImportService {
     return text.startsWith('\uFEFF') ? text.substring(1) : text;
   }
 
-  static String _decodeUtf16(Uint8List bytes, {required bool littleEndian}) {
-    final units = <int>[];
-    for (var i = 2; i + 1 < bytes.length; i += 2) {
-      units.add(
-        littleEndian
-            ? bytes[i] | (bytes[i + 1] << 8)
-            : (bytes[i] << 8) | bytes[i + 1],
-      );
-    }
-    return String.fromCharCodes(units);
-  }
+  // 审计 A-25：UTF-16 解码统一走 utils/utf16.dart（调用方已跳过 2 字节 BOM）。
+  static String _decodeUtf16(Uint8List bytes, {required bool littleEndian}) =>
+      decodeUtf16(bytes, littleEndian: littleEndian);
 }
