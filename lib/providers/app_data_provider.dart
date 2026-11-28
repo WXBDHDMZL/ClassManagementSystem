@@ -15,6 +15,7 @@ import 'dart:io';
 
 import '../utils/app_date.dart';
 import '../utils/record_text.dart';
+import '../utils/student_name.dart' as student_name;
 import 'package:flutter/foundation.dart';
 import '../models/app_data.dart';
 import '../models/student_record.dart';
@@ -2012,12 +2013,6 @@ class AppDataProvider extends _ProviderBase
 
   /// 名单姓名校验（N-3）：与记录侧同一上限，避免"名单里的名字 ≠ 记录里的名字"。
   /// 返回 null 表示通过，否则返回给界面直接显示的原因。
-  static String? validateStudentName(String name) {
-    final value = name.trim();
-    if (value.isEmpty) return '姓名不能为空';
-    if (value.length > AppDataProvider.maxNameLength) {
-      return '姓名不能超过 ${AppDataProvider.maxNameLength} 个字（当前 ${value.length} 个字）';
-    }
-    return null;
-  }
+  static String? validateStudentName(String name) =>
+      student_name.validateStudentName(name);
 }

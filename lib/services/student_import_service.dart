@@ -17,7 +17,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
-import '../providers/app_data_provider.dart';
+import '../utils/student_name.dart';
 import 'transfer_service.dart';
 import 'xlsx_reader.dart';
 
@@ -278,7 +278,7 @@ class StudentImportService {
       if (_isNameHeader(name) || _otherHeaders.contains(name)) continue;
       if (_isOrdinalCell(name)) continue;
 
-      final error = AppDataProvider.validateStudentName(name);
+      final error = validateStudentName(name);
       if (error != null) {
         if (seenInvalid.add(name)) invalid.add(name);
         continue;

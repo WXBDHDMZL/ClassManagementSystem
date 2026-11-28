@@ -69,6 +69,19 @@ def ui_copy_violations():
     return ui_copy_check.scan()
 
 
+def service_provider_imports():
+    """ARCH-01：services 层不得反向依赖 providers 层。"""
+    hits = []
+    pattern = re.compile(
+        r"^import\s+['\"](?:\.\./providers/|package:[^'\"]*/providers/)"
+    )
+    for f in (ROOT / "lib/services").rglob("*.dart"):
+        text = f.read_text(encoding="utf-8")
+        if pattern.search(text):
+            hits.append(str(f.relative_to(ROOT)))
+    return hits
+
+
 def main():
     update = "--update-baseline" in sys.argv
     current = {
@@ -121,6 +134,15 @@ def main():
         )
     else:
         print("[OK] lib 文件头版本一致")
+
+    provider_hits = service_provider_imports()
+    if provider_hits:
+        problems.append(
+            "  ARCH-01 services 反向依赖 providers："
+            + "、".join(provider_hits)
+        )
+    else:
+        print("[OK] services 不依赖 providers")
 
     copy_hits = ui_copy_violations()
     if copy_hits:
