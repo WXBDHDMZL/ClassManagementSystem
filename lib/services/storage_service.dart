@@ -21,6 +21,7 @@ import '../models/app_data.dart';
 import 'error_log_service.dart';
 import 'local_storage_paths.dart';
 import 'storage_crypto.dart';
+import 'storage_key_id.dart';
 import 'storage_key_store.dart';
 
 /// 数据加载结果：区分正常加载、从备份恢复、重置为空三种情况，
@@ -56,6 +57,18 @@ class DataLoadResult {
   /// 此时绝不能生成新钥（会永久解不开原数据），也不能按空库写回。
   final bool keyUnavailable;
 
+  /// 主文件与 `.bak` 都解不开，且旁挂密钥指纹证明"密钥不是写这份数据的那把"
+  /// （审计 A-02）。
+  ///
+  /// 与 [resetToEmpty] 的区别：数据**没有损坏**，换回原 `.enc.key` 即可完整
+  /// 恢复。因此这里既不隔离原文件，也不允许按空库继续。
+  final bool keyMismatch;
+
+  /// 本次启动被隔离的损坏文件路径（`*.corrupt_<毫秒>`）。
+  ///
+  /// 只用于提示文案；用户确认以空库继续后，该文件仍留在磁盘上供人工抢救。
+  final String? quarantinedPath;
+
   const DataLoadResult({
     required this.data,
     this.restoredFromBackup = false,
@@ -64,6 +77,8 @@ class DataLoadResult {
     this.unsupportedFormat = false,
     this.loadFailed = false,
     this.keyUnavailable = false,
+    this.keyMismatch = false,
+    this.quarantinedPath,
   });
 }
 
@@ -231,8 +246,26 @@ class StorageService {
     try {
       await initializeKey();
       final result = await _loadDataOrThrow();
+      // 重启后重新扫描隔离文件（解码 A-01 保护条件）：用户手工删除
+      // `*.corrupt_*` 之后，`.bak` 保护会自动解除，无需额外操作。
+      // 注意必须放在 `_loadDataOrThrow()` **之后**：这里要读数据目录，
+      // 若提前扫描，一次目录瞬时读失败会被扫描吞掉，反而把"加载失败、
+      // 暂停写入"掩盖成"加载成功"（storage_load_failure_test 覆盖）。
+      await _scanQuarantineFiles();
+      if (result.resetToEmpty || result.keyMismatch) {
+        // 审计 A-01：隔离或错钥都**不是**可继续写入的状态 —— 必须等用户
+        // 明确确认（或换回原密钥）。此前这里直接 `_writesBlocked = false`，
+        // 于是"空库 + 可写"在第二次保存时把唯一的 `.bak` 也覆盖掉。
+        _writesBlocked = true;
+        _mainFileParsable = false;
+        _lastWrittenLength = -1;
+        _lastWrittenDigest = null;
+        return result;
+      }
       // 成功加载后才解除写入限制；上一次失败留下的 flag 不应跨成功加载存在。
       _writesBlocked = false;
+      // 加载成功即可确认密钥与数据匹配：顺手校正指纹（A-02 规则 3）。
+      await _refreshKeyId();
       return result;
     } on UnsupportedStorageFormatException catch (e, s) {
       _writesBlocked = true;
@@ -329,6 +362,18 @@ class StorageService {
         throw const UnsupportedStorageFormatException('不兼容的数据目录布局');
       }
     }
+    // 主文件与 `.bak` 都解不开时先看指纹（审计 A-02）：指纹证明"密钥不对"
+    // 就绝不能隔离/重置 —— 数据完好，换回原 `.enc.key` 即可恢复。
+    if (fileExisted && await _keyIdMismatch()) {
+      appendErrorLog(
+        'storage_service',
+        '数据密钥与文件指纹不匹配：主文件未隔离、未重置',
+        null,
+        context: 'loadData 判定 keyMismatch',
+      );
+      return DataLoadResult(data: AppData.empty(), keyMismatch: true);
+    }
+    String? quarantinedPath;
     if (fileExisted) {
       final corrupt =
           '$filePath.corrupt_${DateTime.now().millisecondsSinceEpoch}';
@@ -339,6 +384,9 @@ class StorageService {
         } else {
           await File(filePath).rename(corrupt);
         }
+        quarantinedPath = corrupt;
+        _quarantinePresent = true;
+        _lastQuarantinePath = corrupt;
       } catch (e) {
         appendErrorLog(
           'storage_service',
@@ -347,9 +395,20 @@ class StorageService {
           context: '损坏主文件隔离失败，已阻止自动覆盖',
         );
       }
+      appendErrorLog(
+        'storage_service',
+        '主文件与备份均无法解密，已暂停写入并等待用户确认',
+        null,
+        context: quarantinedPath ?? '$filePath（隔离失败，原文件保留）',
+      );
     }
-    // 文件存在但解析失败、且无可用备份，视为数据重置；完全不存在则是首次启动。
-    return DataLoadResult(data: AppData.empty(), resetToEmpty: fileExisted);
+    // 文件存在但解析失败、且无可用备份，视为数据重置（需用户确认后才可写）；
+    // 文件完全不存在则是首次启动，可正常写入。
+    return DataLoadResult(
+      data: AppData.empty(),
+      resetToEmpty: fileExisted,
+      quarantinedPath: quarantinedPath,
+    );
   }
 
   /// 读取并解析数据文件；文件不存在、解密失败或内容损坏时返回 null。
@@ -422,6 +481,31 @@ class StorageService {
   /// 加载阶段发生 IO 异常后置 true：拒绝一切保存，直到下一次成功加载。
   bool _writesBlocked = false;
 
+  /// 本次运行检测到损坏隔离文件（`*.corrupt_*`），或本次加载刚隔离出一份
+  /// （审计 A-01）。
+  ///
+  /// 用途只有一条：在"库还是空的"期间**不覆盖 `.bak`**，避免用户确认以空库
+  /// 继续后，第二次保存把仅剩的可用备份顶掉。库一旦有数据即恢复正常轮转。
+  bool _quarantinePresent = false;
+
+  /// 最近一次发现的隔离文件路径（仅用于日志/提示）。
+  String? _lastQuarantinePath;
+
+  /// 指纹写入失败，等下一次保存重试（审计 A-02 规则 3）。
+  bool _pendingKeyIdRefresh = false;
+
+  /// 本次运行已确认指纹与当前密钥一致（避免每次保存都多读一次小文件）。
+  bool _keyIdVerified = false;
+
+  /// "库为空时暂不覆盖 .bak"只记一次日志，避免每次保存刷屏。
+  bool _backupProtectionNoted = false;
+
+  /// 本次运行是否存在损坏隔离文件（是否处于"备份保护期"）。
+  bool get quarantinePresent => _quarantinePresent;
+
+  /// 最近一次发现的隔离文件路径。
+  String? get lastQuarantinePath => _lastQuarantinePath;
+
   /// 外部（如 provider 初始化 catch）主动暂停写入，避免空库覆盖原文件。
   void blockWrites(String reason) {
     _writesBlocked = true;
@@ -429,6 +513,145 @@ class StorageService {
     _lastWrittenLength = -1;
     _lastWrittenDigest = null;
     appendErrorLog('storage_service', reason, null, context: '数据加载异常，已暂停保存');
+  }
+
+  /// 用户确认"以空库继续"后解除写入阻断（审计 A-01）。
+  ///
+  /// 前置条件由调用方保证：数据文件已被隔离（磁盘上不存在可解析的主文件）。
+  /// 若隔离本身失败（原文件仍在），这里**不会**解除"损坏文件不得覆盖"的
+  /// 保护，保存会继续被 [_saveDataNow] 拒绝 —— 宁可让用户去删文件，也不能
+  /// 用空库盖掉唯一可抢救的副本。
+  ///
+  /// `.bak` 保护不在这里解除：它由 [quarantinePresent] 与"库是否为空"共同
+  /// 决定，用户录入第一条数据后自动恢复轮转。
+  Future<bool> releaseQuarantineForEmptyLibrary() async {
+    final exists = await File(await dataFilePath).exists();
+    _writesBlocked = false;
+    _mainFileParsable = !exists;
+    _lastWrittenLength = -1;
+    _lastWrittenDigest = null;
+    appendErrorLog(
+      'storage_service',
+      exists ? '用户确认以空库继续，但原文件仍在磁盘上：保存仍被拒绝' : '用户确认以空库继续；在此之前不会覆盖 .bak',
+      null,
+      context: '隔离后解除写入阻断',
+    );
+    return !exists;
+  }
+
+  /// 错钥状态下用户选择"放弃可恢复数据、以空库继续"（审计 A-02 规则 5）。
+  ///
+  /// 仍然**不删除**任何字节：原主文件被改名为 `*.corrupt_<毫秒>` 保留，用户
+  /// 换回原 `.enc.key` 后人工恢复仍可行。
+  Future<bool> discardKeyMismatchAndStartEmpty() async {
+    final filePath = await dataFilePath;
+    final file = File(filePath);
+    if (await file.exists()) {
+      final target =
+          '$filePath.corrupt_${DateTime.now().millisecondsSinceEpoch}';
+      try {
+        await file.rename(target);
+        _quarantinePresent = true;
+        _lastQuarantinePath = target;
+      } on Object catch (e, s) {
+        appendErrorLog(
+          'storage_service',
+          e,
+          s,
+          context: '错钥状态下隔离原数据失败，已保持写入阻断',
+        );
+        return false;
+      }
+    }
+    return releaseQuarantineForEmptyLibrary();
+  }
+
+  /// 指纹文件路径（与主数据同目录、后缀 [StorageKeyId.fileSuffix]）。
+  Future<File> _keyIdFile() async => File('${await dataFilePath}${StorageKeyId.fileSuffix}');
+
+  /// 指纹是否与当前数据密钥不匹配（缺失/非法都按"不匹配"以外处理）。
+  Future<bool> _keyIdMismatch() async {
+    try {
+      final recorded = await StorageKeyId.read(await _keyIdFile());
+      if (recorded == null) return false;
+      return recorded != StorageKeyId.compute(_requireDataKey());
+    } on Object catch (e, s) {
+      // 指纹读不出来（权限/磁盘）：退回旧判定，绝不让辅助文件阻断启动。
+      appendErrorLog('storage_service', e, s, context: '读取数据密钥指纹失败，按缺失处理');
+      return false;
+    }
+  }
+
+  /// 校正旁挂指纹（A-02 规则 3/4）。
+  ///
+  /// 写失败只记日志并置 [_pendingKeyIdRefresh]，下一次保存重试；
+  /// **不影响主数据保存结果**。
+  Future<void> _refreshKeyId() async {
+    if (_keyIdVerified && !_pendingKeyIdRefresh) return;
+    try {
+      final file = await _keyIdFile();
+      final current = StorageKeyId.compute(_requireDataKey());
+      final recorded = await StorageKeyId.read(file);
+      if (recorded == current) {
+        _pendingKeyIdRefresh = false;
+        _keyIdVerified = true;
+        return;
+      }
+      final ok = await StorageKeyId.write(file, current);
+      _pendingKeyIdRefresh = !ok;
+      _keyIdVerified = ok;
+      if (!ok) {
+        appendErrorLog(
+          'storage_service',
+          '数据密钥指纹写入失败（下次保存重试，不影响数据保存）',
+          null,
+          context: file.path,
+        );
+      }
+    } on Object catch (e, s) {
+      _pendingKeyIdRefresh = true;
+      _keyIdVerified = false;
+      appendErrorLog('storage_service', e, s, context: '刷新数据密钥指纹失败');
+    }
+  }
+
+  /// 扫描数据目录里是否存在 `*.corrupt_*` 隔离文件（A-01 保护条件）。
+  Future<void> _scanQuarantineFiles() async {
+    try {
+      final filePath = await dataFilePath;
+      final name = filePath.split(RegExp(r'[/\\]')).last;
+      final prefix = '$name.corrupt_';
+      final dir = File(filePath).parent;
+      String? found;
+      if (await dir.exists()) {
+        await for (final entity in dir.list()) {
+          if (entity is! File) continue;
+          final base = entity.path.split(RegExp(r'[/\\]')).last;
+          if (base.startsWith(prefix)) {
+            found = entity.path;
+            break;
+          }
+        }
+      }
+      _quarantinePresent = found != null;
+      _lastQuarantinePath = found;
+    } on Object catch (e, s) {
+      // 扫描失败时保持原值：宁可多保护一次 .bak，也不要静默放开轮转。
+      appendErrorLog('storage_service', e, s, context: '扫描损坏隔离文件失败');
+    }
+  }
+
+  /// 库内业务数据是否为空（A-01 保护条件的另一半）。
+  ///
+  /// 只看记录/考勤/名单，不看设置：用户确认空库后可能先改设置，那不代表
+  /// 数据已重建，`.bak` 仍需保留。
+  static bool _isEmptyLibraryFor(AppData data) {
+    bool allEmpty(Iterable<List<dynamic>> buckets) =>
+        buckets.every((list) => list.isEmpty);
+    if (data.students.isNotEmpty) return false;
+    if (!allEmpty(data.recordsByDate.values)) return false;
+    if (!allEmpty(data.attendanceByDate.values)) return false;
+    return true;
   }
 
   /// 本程序上次写入主文件后的**字节长度**（-1 = 未知）。
@@ -514,6 +737,21 @@ class StorageService {
         if (!canOverwriteBackup && _lastWrittenDigest == null) {
           canOverwriteBackup = (await _tryLoadFile(filePath)) != null;
         }
+        // 审计 A-01：本次运行隔离过损坏文件，而库里仍是空的 —— 此时主文件
+        // 就是"用户确认后新建的空库"，覆盖 `.bak` 会把最后一份可用备份顶掉。
+        // 用户录入第一条数据后（库非空）自动恢复轮转，无需额外开关。
+        if (canOverwriteBackup && _quarantinePresent && _isEmptyLibraryFor(data)) {
+          canOverwriteBackup = false;
+          if (!_backupProtectionNoted) {
+            _backupProtectionNoted = true;
+            appendErrorLog(
+              'storage_service',
+              '库为空且存在隔离文件：暂不覆盖 .bak（录入数据后自动恢复）',
+              null,
+              context: _lastQuarantinePath ?? '',
+            );
+          }
+        }
         if (canOverwriteBackup) {
           // 第 1 轮 X-1 修复：备份拷贝必须独立 try —— 此前它与下面的主文件写入
           // 共用外层 try，磁盘满或 .bak 被杀软/他进程占用时 copy 抛错会让**整次保存
@@ -543,6 +781,9 @@ class StorageService {
       } catch (_) {
         _lastWrittenLength = -1;
       }
+      // 审计 A-02 规则 3：写盘成功后再校正一次指纹。失败只置待重试标记，
+      // 不影响本次保存的返回值（指纹是辅助判定，不能反过来让保存失败）。
+      await _refreshKeyId();
       return true;
     } catch (e) {
       debugPrint('Error saving data: $e');
@@ -660,7 +901,14 @@ class StorageService {
     final decrypted = portableKey == null
         ? _decodeData(content)
         : StorageCrypto.decodeV3(content, portableKey);
-    if (decrypted == null) return '数据文件已损坏';
+    if (decrypted == null) {
+      // 审计 A-02：本机备份 + 指纹不符 = 这份备份不是用本机密钥加密的，
+      // 直接说"密钥不匹配"（用户可换回原 .key），不要笼统报"数据损坏"。
+      if (portableKey == null && await _keyIdMismatch()) {
+        return '恢复包密钥不匹配';
+      }
+      return '数据文件已损坏';
+    }
     // 第三层：JSON 解析与数据结构解析。
     try {
       final json = jsonDecode(decrypted);
@@ -707,6 +955,12 @@ class StorageService {
       } catch (_) {
         _lastWrittenLength = -1;
       }
+      // 审计 A-01/A-02 状态迁移：恢复成功是阻断态下唯一合法的自救路径，
+      // 这里必须解除写入阻断、按目录重扫隔离文件、并按恢复后的密钥校正指纹。
+      _writesBlocked = false;
+      await _scanQuarantineFiles();
+      _keyIdVerified = false;
+      await _refreshKeyId();
       return null;
     } catch (e) {
       debugPrint('Error restoring from backup: $e');

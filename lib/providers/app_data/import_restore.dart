@@ -32,6 +32,7 @@ mixin _ImportRestoreDomain on _ProviderBase {
     bool overwriteAttendance = false,
     void Function(int generated)? onAttendanceSynced,
   }) {
+    if (_blockedByStartup()) return 0;
     if (!_authorizedFor('records', action: PasswordAction.recordImport)) {
       return 0;
     }
@@ -226,6 +227,7 @@ mixin _ImportRestoreDomain on _ProviderBase {
     Iterable<StudentRecord> records, {
     bool keepAttendance = false,
   }) {
+    if (_blockedByStartup()) return 0;
     if (!_authorizedFor('records', action: PasswordAction.recordDelete)) {
       return 0;
     }
@@ -356,6 +358,7 @@ mixin _ImportRestoreDomain on _ProviderBase {
 
   /// 合并名单：补充缺失的姓名，返回新增人数（保留现有名单与顺序）。
   int mergeStudents(Iterable<String> names) {
+    if (_blockedByStartup()) return 0;
     if (!_authorizedFor('library', action: PasswordAction.rosterImport)) {
       return 0;
     }
@@ -380,6 +383,7 @@ mixin _ImportRestoreDomain on _ProviderBase {
   ///
   /// N-4：全部名字为空/非法时返回 false（名单不变），供调用方提示；成功返回 true。
   bool replaceStudents(List<String> names) {
+    if (_blockedByStartup()) return false;
     if (!_authorizedFor('library', action: PasswordAction.rosterImport)) {
       return false;
     }
@@ -403,6 +407,7 @@ mixin _ImportRestoreDomain on _ProviderBase {
 
   /// 合并原因库：把导入的原因补充到对应时段，返回新增条数。
   int mergeReasons(Iterable<ReasonImportRow> rows) {
+    if (_blockedByStartup()) return 0;
     var added = 0;
     // 批量合并只落盘一次，避免 N 条原因写 N 次文件。
     _batch(() {
@@ -455,6 +460,9 @@ mixin _ImportRestoreDomain on _ProviderBase {
   /// 返回**实际写入**的记录条数（包内条数减去日期非法/为空而跳过的部分），
   /// 供界面提示，避免“还原完成：记录 500 条”比实际写入数虚高。
   Future<int> restoreFromPackage(PackageData data) async {
+    // 审计 A-18a：阻断态下整包还原会覆盖唯一的空库主文件，风险高于收益，
+    // 统一走"备份恢复"这条已验证的自救路径。
+    if (_blockedByStartup()) return -1;
     if (!_authorizedFor('data', action: PasswordAction.dataPackageImport)) {
       return 0;
     }
@@ -675,6 +683,8 @@ mixin _ImportRestoreDomain on _ProviderBase {
   /// 覆盖主数据文件；上一份数据仍保留在 .bak 中，必要时可用"从备份恢复"挽回。
   /// 返回是否已成功落盘；失败时回滚内存，避免界面显示已清空但磁盘仍是旧数据。
   Future<bool> factoryReset() async {
+    // 审计 A-01/A-18a 规则 9：阻断态下 .bak 可能是唯一可用副本，禁止恢复出厂。
+    if (_blockedByStartup()) return false;
     if (!_authorizedFor('factoryReset', action: PasswordAction.factoryReset)) {
       return false;
     }

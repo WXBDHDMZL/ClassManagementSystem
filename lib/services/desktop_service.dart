@@ -283,6 +283,10 @@ class DesktopService with TrayListener, WindowListener {
     _appliedBallMenuPositionLocked = null;
     _appliedBallMenuPraiseEnabled = null;
     _appliedBallMenuCriticismEnabled = null;
+    // 审计 A-01：退出兜底计时器必须一并清掉，否则上一个用例留下的 5 秒
+    // 计时器会在后续用例里触发 exit 兜底。
+    _quitWatchdog?.cancel();
+    _quitWatchdog = null;
     onBallMenuAction = null;
   }
 
@@ -776,6 +780,101 @@ class DesktopService with TrayListener, WindowListener {
           debugPrint('重建托盘图标失败：$e2');
         }
       }
+    }
+  }
+
+  /// 测试注入点：`quitWithoutSaving` 的兜底结束进程动作。
+  ///
+  /// 生产环境为 null（走真实的 `exit(0)`）；测试里必须注入，否则 `exit`
+  /// 会直接把测试进程杀掉。
+  @visibleForTesting
+  static void Function(int code)? debugExitOverride;
+
+  /// 结束进程（可被测试替换，且在 `flutter test` 里绝不真退）。
+  static void _invokeExit(int code) {
+    final override = debugExitOverride;
+    if (override != null) {
+      override(code);
+      return;
+    }
+    if (Platform.environment.containsKey('FLUTTER_TEST')) {
+      debugPrint('（测试环境）跳过 exit($code)');
+      return;
+    }
+    exit(code);
+  }
+
+  /// 审计 A-01/A-02：**不保存**直接退出。
+  ///
+  /// 用在"数据阻断"状态下的「退出并换回原密钥」：此时整库写入被禁止，
+  /// 也不能走 [quitApp]（它会 flush 写盘队列并触发退出备份），否则等于
+  /// 绕过阻断。这里只做"清托盘 → 收悬浮球 → 关窗口"，不写业务数据。
+  ///
+  /// 进程结束有两条路：窗口真正关闭（正常退出），或 5 秒兜底
+  /// [_invokeExit]（close 卡住/托盘线程拖住）。两条都必须走到，否则会留下
+  /// "看不见但还在跑"的进程。
+  Future<void> quitWithoutSaving({String? reason}) async {
+    if (_quitting) return;
+    _quitting = true;
+    // 留痕：阻断态下的退出必须能从日志里回溯（不写业务数据，只写日志）。
+    appendErrorLog(
+      'desktop_service',
+      '用户选择不保存直接退出',
+      null,
+      context: reason == null || reason.isEmpty ? '数据阻断' : reason,
+    );
+    // 日志队列本身是异步的：给 800ms 让它落盘，超时也照样退出。
+    try {
+      await flushErrorLogs().timeout(const Duration(milliseconds: 800));
+    } on Object catch (e) {
+      debugPrint('退出前写日志超时/失败：$e');
+    }
+
+    _quitWatchdog?.cancel();
+    // 兜底：close 成功但进程未退（引擎/托盘线程）时也必须结束，否则用户
+    // 会以为程序已经退出。
+    _quitWatchdog = Timer(const Duration(seconds: 5), () {
+      debugPrint('不保存退出：兜底结束进程');
+      _invokeExit(0);
+    });
+
+    var trayDestroyed = false;
+    try {
+      await windowManager.setPreventClose(false);
+    } on Object catch (e) {
+      // 解除拦截失败：下面 close() 仍会尝试；最坏由 5 秒兜底结束进程。
+      debugPrint('不保存退出：解除关闭拦截失败：$e');
+    }
+    try {
+      await trayManager.destroy();
+      trayDestroyed = true;
+      _trayReady = false;
+    } on Object catch (e) {
+      debugPrint('不保存退出：移除托盘图标失败：$e');
+    }
+    if (_ballActive) {
+      try {
+        await _ballChannel.invokeMethod('hideBall');
+      } on Object catch (e) {
+        debugPrint('不保存退出：隐藏悬浮球失败：$e');
+      }
+      _ballActive = false;
+    }
+    try {
+      await windowManager.close();
+      // close 之后进程通常自行结束；看门狗保留，避免卡在引擎退出。
+    } on Object catch (e) {
+      // 关窗失败：托盘已经销毁，留着进程只会变成"看不见的僵尸"——
+      // 直接把兜底计时器提前，走 exit。
+      debugPrint('不保存退出：关闭窗口失败：$e');
+      _quitWatchdog?.cancel();
+      _quitWatchdog = Timer(const Duration(milliseconds: 200), () {
+        _invokeExit(0);
+      });
+    }
+    if (!trayDestroyed) {
+      // 托盘没销毁成功：至少保证进程会退出，不让图标长期悬挂。
+      debugPrint('不保存退出：托盘未销毁，等待兜底退出');
     }
   }
 

@@ -51,7 +51,9 @@ mixin _ExportBackupDomain on _ProviderBase {
     // 批次结束才入队；此时 await 旧链尾会"假成功"。返回 false 让调用方
     // 明确知道当前不能保证已落盘（现有调用点都不在批次内，属防御）。
     if (_suspendSaveDepth > 0) return false;
-    _save();
+    // 审计 A-18a：阻断态下 _save() 不会入队（返回 false），此前这里仍然
+    // `await _pendingSave` 后返回 true，等于把"没写"报成"写成功"。
+    if (!_save()) return false;
     await _pendingSave;
     return !_lastSaveFailed;
   }
@@ -175,6 +177,8 @@ mixin _ExportBackupDomain on _ProviderBase {
   /// 覆盖范围与 `listBackupFiles` 一致（含手动改名的备份），
   /// 并连带删除对应的 `.logs` 日志快照；不碰目录中的其它文件。返回删除份数。
   Future<int> clearAllBackups() async {
+    // 审计 A-01/A-18a 规则 9：阻断态下 .bak 可能是唯一可用副本，禁止批量清理。
+    if (_blockedByStartup()) return 0;
     var removed = 0;
     try {
       final directory = await backupDirectory();
@@ -235,6 +239,8 @@ mixin _ExportBackupDomain on _ProviderBase {
   /// 正常保存都会先把旧主文件复制成 `.bak`；若不清掉，用户选择“清除全部
   /// 备份”后仍能从列表里一键恢复出完整的旧数据。
   Future<bool> clearDataBackup() async {
+    // 审计 A-01/A-18a 规则 9：阻断态下 .bak 可能是唯一可用副本，禁止删除。
+    if (_blockedByStartup()) return false;
     try {
       final filePath = await _storageService.dataFilePath;
       final bak = File('$filePath.bak');
@@ -445,6 +451,7 @@ mixin _ExportBackupDomain on _ProviderBase {
             result.restoredFromBackup ||
             result.unsupportedFormat ||
             result.keyUnavailable ||
+            result.keyMismatch ||
             result.backupRestoreWriteFailed) {
           _log('从备份恢复失败', '$sourcePath · 恢复后数据读取校验失败');
           return '恢复后数据读取校验失败：备份文件已写入，但读取校验未通过，'
@@ -453,6 +460,14 @@ mixin _ExportBackupDomain on _ProviderBase {
         }
         _appData = result.data;
         restored = true;
+        // 审计 A-01/A-02 规则 8：恢复是阻断态下唯一合法的自救路径，成功后
+        // 必须解除写入阻断，否则本会话仍拒绝保存，用户会以为恢复失败。
+        _storageWriteBlocked = false;
+        _needsEmptyLibraryConfirm = false;
+        _keyMismatchBlocked = false;
+        _quarantinedPath = null;
+        _startupNotice = '已从备份恢复数据，写入已恢复';
+        _startupNoticeIsError = false;
         // 先套用备份里的自定义时段，保证恢复后的时段解释与备份一致。
         _applySettingsPeriods();
       } finally {

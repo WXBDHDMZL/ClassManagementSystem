@@ -243,6 +243,7 @@ mixin _AttendanceDomain on _ProviderBase {
     String periodKey = AttendanceRecord.allDayKey,
     PasswordAction action = PasswordAction.attendanceRegister,
   }) {
+    if (_blockedByStartup()) return false;
     return setAttendanceForStudents(
           [studentName],
           status,
@@ -256,6 +257,7 @@ mixin _AttendanceDomain on _ProviderBase {
   /// 批量导入考勤（同一天同一学生同一时间段以导入的为准），返回写入条数。
   /// 导入记录允许 id 为空（表格导入时没有 id），由这里分配。
   int importAttendance(Iterable<AttendanceRecord> records) {
+    if (_blockedByStartup()) return 0;
     if (!_authorizedFor(
       'attendance',
       action: PasswordAction.attendanceImport,
@@ -405,6 +407,7 @@ mixin _AttendanceDomain on _ProviderBase {
 
   /// 清空某天的全部考勤记录（连同同步产生的批评记录），返回清掉的条数。
   int clearAttendance(String date) {
+    if (_blockedByStartup()) return 0;
     if (!_authorizedFor('attendance', action: PasswordAction.attendanceUndo)) {
       return 0;
     }

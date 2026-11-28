@@ -16,6 +16,46 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+/// 解密结果状态（审计 A-02）。
+///
+/// 此前 `decodeV3` 用 `null` 同时表示"文件损坏"和"密钥不对"，导致换错
+/// `.key` 时把完好数据判为损坏并隔离/重置。主数据路径改为三态。
+enum StorageDecodeStatus {
+  /// 解密与 HMAC 完整性校验通过。
+  ok,
+
+  /// 密文本身不可用：Base64/魔数/长度/HMAC/UTF-8 任一失败。
+  corrupt,
+
+  /// 密文完好，但不是用当前数据密钥加密的。
+  ///
+  /// 纯密码学无法判定（LRX3 头没有密钥标识），
+  /// [StorageCrypto.decodeV3Detailed] 永不返回它；该状态由存储层结合旁挂
+  /// 密钥指纹（`StorageKeyId`）给出，用来引导用户换回原 `.enc.key`。
+  keyMismatch,
+}
+
+/// [StorageCrypto.decodeV3Detailed] 的返回值。
+class StorageDecodeResult {
+  const StorageDecodeResult._(this.status, this.text);
+
+  const StorageDecodeResult.ok(String text)
+    : this._(StorageDecodeStatus.ok, text);
+
+  const StorageDecodeResult.corrupt()
+    : this._(StorageDecodeStatus.corrupt, null);
+
+  const StorageDecodeResult.keyMismatch()
+    : this._(StorageDecodeStatus.keyMismatch, null);
+
+  final StorageDecodeStatus status;
+
+  /// 明文；仅在 [status] 为 [StorageDecodeStatus.ok] 时非空。
+  final String? text;
+
+  bool get isOk => status == StorageDecodeStatus.ok;
+}
+
 /// LRX3 文件格式的纯 Dart 实现。
 ///
 /// 5.0 主程序只支持 LRX3；LRX2 仅保留魔数识别，用于明确拒绝旧数据。
@@ -56,11 +96,29 @@ class StorageCrypto {
     return base64Encode([...body, ...tag]);
   }
 
-  static String? decodeV3(String encodedText, Uint8List key) {
+  /// 解密并做完整性校验；失败返回 null。
+  ///
+  /// 只需要"成功/失败"的调用点用这个（日志行、锁定状态、便携备份口令信封）；
+  /// 需要区分失败原因的主数据路径必须用 [decodeV3Detailed]。
+  static String? decodeV3(String encodedText, Uint8List key) =>
+      decodeV3Detailed(encodedText, key).text;
+
+  /// 解密并区分失败原因（审计 A-02）。
+  ///
+  /// 返回 [StorageDecodeStatus.ok] 或 [StorageDecodeStatus.corrupt]；
+  /// **不会**返回 [StorageDecodeStatus.keyMismatch] —— 只看密文无法判定
+  /// "密钥不对"（LRX3 头不带密钥标识，错钥与损坏都表现为 HMAC 不匹配）。
+  /// 该状态由存储层结合旁挂密钥指纹（`StorageKeyId`）给出。
+  static StorageDecodeResult decodeV3Detailed(
+    String encodedText,
+    Uint8List key,
+  ) {
     try {
       final bytes = base64Decode(encodedText.trim());
-      if (!isV3(bytes)) return null;
-      if (bytes.length < 4 + saltLength + nonceLength + tagLength) return null;
+      if (!isV3(bytes)) return const StorageDecodeResult.corrupt();
+      if (bytes.length < 4 + saltLength + nonceLength + tagLength) {
+        return const StorageDecodeResult.corrupt();
+      }
       final body = bytes.sublist(0, bytes.length - tagLength);
       final tag = bytes.sublist(bytes.length - tagLength);
       final salt = Uint8List.fromList(bytes.sublist(4, 4 + saltLength));
@@ -73,15 +131,17 @@ class StorageCrypto {
       );
       final (encKey, macKey) = _deriveSubKeysV3(key, salt);
       final expected = Hmac(sha256, macKey).convert(body).bytes;
-      if (!constantTimeEquals(expected, tag)) return null;
+      if (!constantTimeEquals(expected, tag)) {
+        return const StorageDecodeResult.corrupt();
+      }
       final stream = _keystream(encKey, salt, nonce, cipher.length);
       final plain = Uint8List(cipher.length);
       for (var i = 0; i < cipher.length; i++) {
         plain[i] = cipher[i] ^ stream[i];
       }
-      return utf8.decode(plain);
-    } on Object catch (_) {
-      return null;
+      return StorageDecodeResult.ok(utf8.decode(plain));
+    } on Object {
+      return const StorageDecodeResult.corrupt();
     }
   }
 

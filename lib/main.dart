@@ -39,6 +39,7 @@ import './widgets/identity_guard.dart';
 import './widgets/password_action_guard.dart';
 import './widgets/change_password_dialog.dart';
 import './widgets/settings_panel.dart';
+import './widgets/startup_data_block_dialog.dart';
 import './widgets/update_prompt_host.dart';
 import './constants/app_theme.dart';
 import './models/app_settings.dart';
@@ -355,6 +356,9 @@ class _RootPageState extends State<_RootPage> with WidgetsBindingObserver {
     _checkAutoBackupNotice(provider);
     // 名单已就绪：按名单推算最小窗口尺寸（默认窗口大小也取它）。
     _syncMinimumWindowSize(provider);
+    // 审计 A-01/A-02：启动期数据阻断必须让用户显式处理，不能只弹一条
+    // 一次性 toast 就继续跑（那样第一条改动就会把空库写进磁盘）。
+    _scheduleDataBlockDialog(provider);
     // 托盘不可用时告知用户：此时关闭窗口只会直接退出程序。
     if (DesktopService.instance.initialized &&
         !DesktopService.instance.trayReady) {
@@ -369,6 +373,39 @@ class _RootPageState extends State<_RootPage> with WidgetsBindingObserver {
       if (mounted) {
         setState(() => _splashRemoved = true);
       }
+    });
+  }
+
+  /// 弹启动期数据阻断对话框（只弹一次；用户选"稍后处理"后仍保持阻断，
+  /// 后续任何写入尝试都会由 provider 提示）。
+  void _scheduleDataBlockDialog(AppDataProvider provider) {
+    if (!provider.keyMismatchBlocked && !provider.needsEmptyLibraryConfirm) {
+      return;
+    }
+    if (_dataBlockDialogShown) return;
+    _dataBlockDialogShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final kind = provider.keyMismatchBlocked
+          ? StartupDataBlockKind.keyMismatch
+          : StartupDataBlockKind.corrupted;
+      await showStartupDataBlockDialog(context, kind: kind);
+    });
+  }
+
+  /// 阻断态提示是否已弹过（按 provider 的序号判重）。
+  int _lastBlockedNoticeSerial = 0;
+
+  /// 阻断态下用户尝试写数据时，把 provider 的提示显示出来（不静默）。
+  void _syncBlockedActionNotice(AppDataProvider provider) {
+    if (provider.blockedActionNoticeSerial == _lastBlockedNoticeSerial) return;
+    _lastBlockedNoticeSerial = provider.blockedActionNoticeSerial;
+    final message = provider.blockedActionNotice;
+    if (message == null) return;
+    provider.clearBlockedActionNotice();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showTopSnackBar(context, message, isError: true);
     });
   }
 
@@ -396,10 +433,14 @@ class _RootPageState extends State<_RootPage> with WidgetsBindingObserver {
     _syncMinimumWindowSize(provider);
     _syncSaveFailureNotice(provider);
     _checkAutoBackupNotice(provider);
+    _syncBlockedActionNotice(provider);
   }
 
   /// 上次据以推算最小窗口尺寸的名单指纹。
   int? _minWindowKey;
+
+  /// 启动期数据阻断对话框是否已弹过（避免每次 rebuild 重复弹）。
+  bool _dataBlockDialogShown = false;
 
   /// B-09：启动自动备份失败时提示一次；成功/未到期后复位。
   void _checkAutoBackupNotice(AppDataProvider provider) {

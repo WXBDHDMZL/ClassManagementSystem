@@ -63,14 +63,28 @@ void main() {
           reason: '隔离后的内容必须与原始损坏内容逐字节一致');
     });
 
-    test('隔离后保存新数据：主文件重建，损坏副本仍在', () async {
+    test('隔离后确认前拒绝保存，确认后才重建主文件，损坏副本仍在', () async {
       await mainFile().writeAsString('损坏内容!!!');
-      await storage.loadData();
+      final loaded = await storage.loadData();
+      expect(loaded.resetToEmpty, isTrue);
+
+      // 旧期望：这里直接断言 saveData 返回 true 并重建主文件。
+      // 新期望（审计 A-01）：隔离后**必须等用户显式确认**，否则第一次自动
+      // 保存就会把空库写进主文件、第二次再把 `.bak` 顶掉，最后一份可抢救
+      // 数据只剩没有入口的 `.corrupt_*`。
+      final blocked = await storage.saveData(
+        AppData.fromJson(const {'students': ['新数据张三']}),
+      );
+      expect(blocked, isFalse, reason: '确认前必须拒绝写入');
+      expect(await mainFile().exists(), isFalse, reason: '拒绝写入时不得重建主文件');
+      expect(corruptFiles(), hasLength(1), reason: '拒绝写入不得动损坏副本');
+
+      // 用户显式确认（对话框输入"确认以空库继续"）后才放行。
+      expect(await storage.releaseQuarantineForEmptyLibrary(), isTrue);
 
       final ok = await storage.saveData(
         AppData.fromJson(const {'students': ['新数据张三']}),
       );
-
       expect(ok, isTrue);
       expect(await mainFile().exists(), isTrue);
       final reloaded = await StorageService().loadData();

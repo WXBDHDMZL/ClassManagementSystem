@@ -506,6 +506,61 @@ abstract class _ProviderBase extends ChangeNotifier {
   String? get startupNotice => _startupNotice;
   bool get startupNoticeIsError => _startupNoticeIsError;
 
+  /// 审计 A-01：主数据与 `.bak` 都无法解密，原文件已隔离成 `.corrupt_*`。
+  /// 此时必须等用户**显式确认**才能开始写空库，否则第一次自动保存就会
+  /// 把最后一份可用备份（`.bak`）顶掉。
+  bool _needsEmptyLibraryConfirm = false;
+  bool get needsEmptyLibraryConfirm => _needsEmptyLibraryConfirm;
+
+  /// 审计 A-02：数据文件与本机数据密钥指纹不符（多半是 key 文件被换/被还原）。
+  /// 这种情况下主文件很可能完好，绝不能隔离、更不能写空库。
+  bool _keyMismatchBlocked = false;
+  bool get keyMismatchBlocked => _keyMismatchBlocked;
+
+  /// 被隔离的原数据文件路径（供对话框与提示引用，不含学生数据）。
+  String? _quarantinedPath;
+  String? get quarantinedPath => _quarantinedPath;
+
+  /// 阻断态下用户尝试写数据时的提示语（主界面监听序号变化后弹一次）。
+  String? _blockedActionNotice;
+  int _blockedActionNoticeSerial = 0;
+  String? get blockedActionNotice => _blockedActionNotice;
+  int get blockedActionNoticeSerial => _blockedActionNoticeSerial;
+
+  /// 存储写入是否处于阻断态。
+  bool get storageWriteBlocked => _storageWriteBlocked;
+
+  /// 数据写入是否被启动期异常挡住；被挡住时顺带抛出一次面向用户的提示。
+  bool _blockedByStartup() {
+    if (!_storageWriteBlocked) return false;
+    _announceBlockedAction();
+    return true;
+  }
+
+  /// 阻断态下的统一提示：既不静默吞掉用户操作，也不重复刷屏。
+  void _announceBlockedAction([String? message]) {
+    final text =
+        message ??
+        (_keyMismatchBlocked
+            ? '数据密钥不匹配，已拒绝写入。请换回原数据密钥文件后重启。'
+            : '数据处于保护状态，已拒绝写入。请先处理启动提示中的问题。');
+    if (_blockedActionNotice != null) {
+      // 同一个操作可能触发多次 _save()：未消费前只更新文案，不再累计次数，
+      // 否则界面会连弹多条同样的提示。
+      _blockedActionNotice = text;
+      return;
+    }
+    _blockedActionNotice = text;
+    _blockedActionNoticeSerial++;
+    notifyListeners();
+  }
+
+  /// 消费阻断态提示（界面弹完 snackbar 后调用）。
+  void clearBlockedActionNotice() {
+    if (_blockedActionNotice == null) return;
+    _blockedActionNotice = null;
+  }
+
   Future<void> initialize() async {
     try {
       final result = await _storageService.loadData();
@@ -532,6 +587,15 @@ abstract class _ProviderBase extends ChangeNotifier {
             '数据密钥丢失或无法由当前 Windows 用户解密，已暂停保存。'
             '请使用原 Windows 用户/原电脑打开，或用备份恢复；不要删除数据文件。';
         _startupNoticeIsError = true;
+      } else if (result.keyMismatch) {
+        // 审计 A-02：数据文件完好但密钥指纹不符——多半是把别的 key 文件
+        // 还原到了本机。这里既不隔离主文件、也不写空库，等用户换回原密钥。
+        _storageWriteBlocked = true;
+        _keyMismatchBlocked = true;
+        _startupNotice =
+            '数据文件与本机数据密钥不匹配，已暂停保存并保留全部原文件。'
+            '请换回原来的数据密钥文件（class_management_data.enc.key）后重启。';
+        _startupNoticeIsError = true;
       } else if (result.backupRestoreWriteFailed) {
         _storageWriteBlocked = true;
         _startupNotice =
@@ -542,7 +606,14 @@ abstract class _ProviderBase extends ChangeNotifier {
         _startupNotice = '数据文件损坏，已自动从备份恢复';
         _startupNoticeIsError = false;
       } else if (result.resetToEmpty) {
-        _startupNotice = '数据文件损坏且无可用备份，现有数据已重置';
+        // 审计 A-01：原文件已隔离，但**不能**直接以空库开跑——必须先让用户
+        // 知道"还有一份被隔离的原文件"，并显式确认后才解除写入阻断。
+        _storageWriteBlocked = true;
+        _needsEmptyLibraryConfirm = true;
+        _quarantinedPath = result.quarantinedPath;
+        _startupNotice =
+            '数据文件损坏且无法从备份恢复，原文件已隔离保存（未删除）。'
+            '在确认前程序不会写入，也不会覆盖上一份备份。';
         _startupNoticeIsError = true;
       }
       if (AuthService.legacyStateUnsupported && _startupNotice == null) {
@@ -579,6 +650,38 @@ abstract class _ProviderBase extends ChangeNotifier {
     _invalidateDerivedCaches();
     _isLoading = false;
     notifyListeners();
+  }
+
+  /// 审计 A-01/A-02：用户在对话框里显式确认后，才允许把当前空库变成可写。
+  ///
+  /// - [needsEmptyLibraryConfirm]：原文件已被隔离，这里只是解除写入阻断
+  ///   （隔离文件原样保留，`lib/` 不会删除它）。
+  /// - [keyMismatchBlocked]：用户确认"放弃可恢复数据"，把不匹配的主文件改名
+  ///   隔离后再放行——原文件同样保留。
+  ///
+  /// 返回 false 表示仍无法切换到可写状态（文件忙/磁盘只读等），此时保持阻断。
+  Future<bool> confirmEmptyLibrary() async {
+    final released = _keyMismatchBlocked
+        ? await _storageService.discardKeyMismatchAndStartEmpty()
+        : await _storageService.releaseQuarantineForEmptyLibrary();
+    if (!released) {
+      _startupNotice =
+          '仍无法切换为可写状态：请关闭占用该文件的程序后重试，'
+          '并保留原数据文件。';
+      _startupNoticeIsError = true;
+      notifyListeners();
+      return false;
+    }
+    _storageWriteBlocked = false;
+    _needsEmptyLibraryConfirm = false;
+    _keyMismatchBlocked = false;
+    _startupNotice =
+        '已切换为空库：原数据文件已隔离保留、未被删除。'
+        '在录入新数据之前，上一份备份不会被覆盖。';
+    _startupNoticeIsError = false;
+    _invalidateDerivedCaches();
+    notifyListeners();
+    return true;
   }
 
   /// 记录在"搬运既有数据"时的归属日期（R-1）：
@@ -782,10 +885,16 @@ abstract class _ProviderBase extends ChangeNotifier {
     }
   }
 
-  void _save() {
+  bool _save() {
+    // 审计 A-01/A-18a：阻断态下**不能**再走写盘链。此前只提示"已暂停保存"，
+    // 但每次 _save() 仍把界面通知发出去了，用户看不到"没存进去"这件事。
+    if (_storageWriteBlocked) {
+      _announceBlockedAction();
+      return false;
+    }
     if (_suspendSaveDepth > 0) {
       _savePending = true;
-      return;
+      return true;
     }
     // 第 1 轮修复：指纹与计数缓存**必须在首次通知之前**失效 —— 此前顺序相反，
     // 首轮 rebuild 读到的是过期缓存（统计数据短暂停留旧值），要等落盘后的第二次
@@ -815,6 +924,7 @@ abstract class _ProviderBase extends ChangeNotifier {
     // 显式声明"故意不等待"：写盘在队列里串行执行，结果由 saveFailed 标志与
     // 主界面横幅呈现；退出前由 flushPendingSaves() 统一等待（见其注释）。
     unawaited(_pendingSave);
+    return true;
   }
 
   String _sanitizeReasonText(String text) => RecordText.normalizeReason(text);
@@ -1694,6 +1804,7 @@ abstract class _ProviderBase extends ChangeNotifier {
     bool overwriteManualAttendance = false,
     PasswordAction action = PasswordAction.attendanceRegister,
   }) {
+    if (_blockedByStartup()) return 0;
     if (!_authorizedFor('attendance', action: action)) return 0;
     if (action == PasswordAction.attendanceRegister &&
         _internalWriteDepth == 0 &&

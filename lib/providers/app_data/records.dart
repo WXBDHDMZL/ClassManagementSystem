@@ -84,6 +84,8 @@ mixin _RecordsDomain on _ProviderBase {
     String? timestamp,
     String? recordId,
   }) {
+    // 审计 A-18a：阻断态下拒绝写入，避免"界面已加、磁盘没有"的假成功。
+    if (_blockedByStartup()) return null;
     if (_internalWriteDepth == 0 && !canActiveIdentityAddRecord) {
       _log('安全验证', '拒绝新增记录：当前身份无普通模式新增权限');
       return null;
@@ -155,6 +157,7 @@ mixin _RecordsDomain on _ProviderBase {
     bool isBatch = false,
     String? date,
   }) {
+    if (_blockedByStartup()) return 0;
     if (_internalWriteDepth == 0 && !canActiveIdentityAddRecord) {
       _log('安全验证', '拒绝批量新增：当前身份无普通模式新增权限');
       return 0;
@@ -199,6 +202,7 @@ mixin _RecordsDomain on _ProviderBase {
     String remark, {
     String? date,
   }) {
+    if (_blockedByStartup()) return false;
     var searchDate = date ?? _getTodayString();
     var records = _appData.recordsByDate[searchDate];
     var index = records?.indexWhere((r) => r.id == recordId) ?? -1;
@@ -326,6 +330,7 @@ mixin _RecordsDomain on _ProviderBase {
     >
     items,
   ) {
+    if (_blockedByStartup()) return 0;
     if (_internalWriteDepth == 0 && !canActiveIdentityAddRecord) {
       _log('安全验证', '拒绝批量新增：当前身份无普通模式新增权限');
       return 0;
@@ -389,6 +394,7 @@ mixin _RecordsDomain on _ProviderBase {
   /// 撤销最近一次记录变更（新增/修改/删除）。返回实际撤销条数；0 表示没有
   /// 可撤销的操作、已过期，或目标记录已被修改/删除。
   int undoLastRecordChange() {
+    if (_blockedByStartup()) return 0;
     final undo = _lastRecordUndo;
     if (undo == null) return 0;
     _lastRecordUndo = null;
