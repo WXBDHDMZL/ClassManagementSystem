@@ -309,10 +309,21 @@ void main() {
     expect(ball.has('showMainWindow'), isTrue);
   });
 
-  test('原生事件：拖动球 → 把坐标记进设置（位置记忆）', () async {
+  test('原生事件：拖动球 → 停手后把坐标记进设置（位置记忆）', () async {
     await initService();
 
     await emitFromNative('onBallMoved', {'x': 42, 'y': 99});
+
+    // 旧期望：emit 之后立刻 expect(ballX, 42) —— 对应"每次拖动回调都整库
+    // 加密写盘"的旧实现。新期望（审计 A-13）：拖动先攒着，停手 1.2 秒后
+    // 写一次，避免拖动过程持续产生全量写盘；退出前由 quitApp 强制冲刷。
+    expect(
+      provider.appData.settings.ballX,
+      -1,
+      reason: '拖动过程中不应立刻整库写盘',
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 1400));
 
     expect(provider.appData.settings.ballX, 42);
     expect(provider.appData.settings.ballY, 99);

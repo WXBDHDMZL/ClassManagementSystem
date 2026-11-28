@@ -76,6 +76,16 @@ class DesktopService with TrayListener, WindowListener {
 
   /// 是否已完成初始化（测试环境下不会初始化，用于跳过桌面相关的提示）。
   bool _initialized = false;
+
+  /// 启动时的窗口几何是否已应用（审计 A-15）。隐藏启动（--tray/--ball）会跳过
+  /// 应用，第一次从托盘/悬浮球恢复主窗口时必须补上，否则窗口恒为默认尺寸。
+  bool _startupGeometryApplied = false;
+
+  /// 悬浮球位置的落盘防抖（审计 A-13）。拖动会连续回调，若每次整库加密写盘，
+  /// 拖动过程会不断产生全量写入；这里只在停手后写一次，退出前强制冲刷。
+  Timer? _ballPositionSaveTimer;
+  int? _pendingBallX;
+  int? _pendingBallY;
   bool get initialized => _initialized;
 
   /// 托盘是否可用：不可用时关闭窗口保持"直接退出"，避免隐藏后无法恢复。
@@ -300,6 +310,11 @@ class DesktopService with TrayListener, WindowListener {
     // 计时器会在后续用例里触发 exit 兜底。
     _quitWatchdog?.cancel();
     _quitWatchdog = null;
+    _ballPositionSaveTimer?.cancel();
+    _ballPositionSaveTimer = null;
+    _pendingBallX = null;
+    _pendingBallY = null;
+    _startupGeometryApplied = false;
     onBallMenuAction = null;
   }
 
@@ -434,6 +449,14 @@ class DesktopService with TrayListener, WindowListener {
   /// 由原生恢复并显示主窗口，等 Flutter 下一帧后再让窗口可见，
   /// 避免最小化恢复时短暂露出空白白底（DWM cloak）。
   Future<void> _restoreMainWindow() async {
+    // 审计 A-15：隐藏启动时 main() 跳过了 applyStartupWindowMode，恢复主窗口
+    // 前补一次，让"记住的尺寸/位置/最大化"在托盘与悬浮球恢复时同样生效。
+    if (!_startupGeometryApplied) {
+      final provider = _provider;
+      if (provider != null) {
+        await applyStartupWindowMode(provider.appData.settings);
+      }
+    }
     try {
       await _ballChannel.invokeMethod('showMainWindow');
       await windowManager.focus();
@@ -568,6 +591,9 @@ class DesktopService with TrayListener, WindowListener {
           // 默认大小 = 按名单推算的最小尺寸（保证学生姓名完整显示）。
           await windowManager.setSize(_minimumWindowSize);
       }
+      // 审计 A-15：几何一旦应用成功就记下来，供 _restoreMainWindow 判断
+      // "隐藏启动跳过了这一步"时补应用（失败则不置位，下次恢复窗口再试）。
+      _startupGeometryApplied = true;
     } catch (e) {
       debugPrint('应用启动窗口状态失败：$e');
       appendErrorLog(
@@ -739,6 +765,8 @@ class DesktopService with TrayListener, WindowListener {
           );
         }
       }
+      // 悬浮球位置可能还在防抖计时器里，先冲刷再落盘。
+      await _flushPendingBallPosition();
       await _provider?.flushPendingSaves();
       // 审计 A-24：数据落盘之后还要把日志队列排空 —— 此前退出只 flush 数据，
       // 最后几条运行日志/错误日志会随进程结束丢掉，事后再也查不到"关窗前发生了什么"。
@@ -807,6 +835,22 @@ class DesktopService with TrayListener, WindowListener {
         }
       }
     }
+  }
+
+  /// 把防抖中的悬浮球位置立即写入（退出、收起球、切回主窗口时调用）。
+  Future<void> _flushPendingBallPosition() async {
+    _ballPositionSaveTimer?.cancel();
+    _ballPositionSaveTimer = null;
+    final x = _pendingBallX;
+    final y = _pendingBallY;
+    _pendingBallX = null;
+    _pendingBallY = null;
+    if (x == null || y == null) {
+      return;
+    }
+    // setBallPosition 会把位置写进内存并入队一次整库保存；真正落盘由调用方
+    // 紧接着的 flushPendingSaves() 等写盘队列负责。
+    _provider?.setBallPosition(x, y);
   }
 
   /// 退出/关机前把三类日志队列（运行日志、日志文件、错误日志）排空。
@@ -1176,7 +1220,18 @@ class DesktopService with TrayListener, WindowListener {
             final x = arguments['x'];
             final y = arguments['y'];
             if (x is int && y is int) {
-              _provider?.setBallPosition(x, y);
+              // 审计 A-13：拖动会连续回调，先记下最新位置，停手 1.2 秒后再整库
+              // 写一次；退出前由 quitApp 强制冲刷，位置不会丢。
+              _pendingBallX = x;
+              _pendingBallY = y;
+              _ballPositionSaveTimer?.cancel();
+              _ballPositionSaveTimer = Timer(
+                const Duration(milliseconds: 1200),
+                () {
+                  _ballPositionSaveTimer = null;
+                  unawaited(_flushPendingBallPosition());
+                },
+              );
             }
           }
         case 'onBallMenuCommand':

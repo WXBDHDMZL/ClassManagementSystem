@@ -90,6 +90,10 @@ class BallWindow {
   // 拖动结束：夹回工作区并回调最终位置。
   void FinishDrag();
 
+  // 把球夹回当前所在显示器的工作区并按新位置重绘（审计 A-14）。
+  // 拖动结束、分辨率/DPI 变化、显示器拔插后都要走一次。
+  void ClampToVisibleArea();
+
   // 计算"默认位置"（主显示器工作区右下角，物理像素）。
   void ResolveDefaultPosition(int* physical_x, int* physical_y) const;
 

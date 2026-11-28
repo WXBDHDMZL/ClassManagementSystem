@@ -290,7 +290,7 @@ void BallWindow::ShowContextMenu(HWND window) {
   }
 }
 
-void BallWindow::FinishDrag() {
+void BallWindow::ClampToVisibleArea() {
   if (window_handle_ == nullptr || window_size_ <= 0) {
     return;
   }
@@ -311,6 +311,14 @@ void BallWindow::FinishDrag() {
       RenderAt(clamped_x, clamped_y);
     }
   }
+}
+
+void BallWindow::FinishDrag() {
+  if (window_handle_ == nullptr || window_size_ <= 0) {
+    return;
+  }
+
+  ClampToVisibleArea();
 
   if (on_moved) {
     on_moved(window_x_, window_y_);
@@ -609,6 +617,21 @@ LRESULT BallWindow::HandleMessage(HWND window, UINT message, WPARAM wparam,
     case WM_CONTEXTMENU:
       // 自定义菜单已经由 WM_RBUTTONUP 弹出，阻止系统再弹一次默认菜单。
       return 0;
+    case WM_DISPLAYCHANGE:
+    case WM_DPICHANGED:
+    case WM_SETTINGCHANGE: {
+      // 审计 A-14：显示器拔插 / 分辨率变化 / DPI 缩放切换后，球原来的坐标
+      // 可能落在任何显示器之外（桌面缩小、副屏被拔掉），表现为"球不见了"。
+      // 这里按新布局重新夹一次并把结果回写 Dart，位置才能真正持久化。
+      if (is_visible_ && window_handle_ != nullptr) {
+        ClampToVisibleArea();
+        if (on_moved) {
+          on_moved(window_x_, window_y_);
+        }
+      }
+      break;
+    }
+
     case WM_CAPTURECHANGED:
       // 捕获被系统或其他窗口抢走（如弹出 UAC、切换应用）时复位，
       // 否则会停在"按下中"状态，之后鼠标划过球就会意外拖动。

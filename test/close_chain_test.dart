@@ -47,6 +47,8 @@ const MethodChannel _pathProviderChannel = MethodChannel(
 class _Recorded {
   final List<MethodCall> calls = [];
 
+  bool has(String method) => calls.any((c) => c.method == method);
+
   MethodCall? last(String method) {
     final matched = calls.where((c) => c.method == method).toList();
     return matched.isEmpty ? null : matched.last;
@@ -344,6 +346,99 @@ void main() {
       expect(content, contains('系统即将关机'));
     });
   });
+
+  group('A-13 / A-15 悬浮球位置防抖与隐藏启动的窗口几何', () {
+    test('连续拖动只落盘一次，退出前强制冲刷', () async {
+      final counting = _CountingProvider();
+      await service.initialize(
+        provider: counting,
+        navigatorKey: GlobalKey<NavigatorState>(),
+      );
+
+      Future<void> emitBallMoved(int x, int y) async {
+        await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .handlePlatformMessage(
+          _ballChannel.name,
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall('onBallMoved', <String, Object?>{'x': x, 'y': y}),
+          ),
+          (_) {},
+        );
+      }
+
+      await emitBallMoved(100, 200);
+      await emitBallMoved(300, 400);
+      await emitBallMoved(500, 600);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        counting.ballPositions,
+        isEmpty,
+        reason: '拖动过程中不应每帧整库写盘，应先攒着',
+      );
+
+      // 停手 1.2 秒后写一次，且只写最后的位置。
+      await Future<void>.delayed(const Duration(milliseconds: 1400));
+      expect(counting.ballPositions, <String>['500,600']);
+    });
+
+    test('退出时把还没到点的球位置冲刷掉', () async {
+      final counting = _CountingProvider();
+      await service.initialize(
+        provider: counting,
+        navigatorKey: GlobalKey<NavigatorState>(),
+      );
+
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        _ballChannel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('onBallMoved', <String, Object?>{'x': 700, 'y': 800}),
+        ),
+        (_) {},
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(counting.ballPositions, isEmpty);
+
+      await service.quitApp();
+      expect(
+        counting.ballPositions,
+        <String>['700,800'],
+        reason: '防抖计时器还没到点就退出时，位置必须在退出前写下去',
+      );
+    });
+
+    test('隐藏启动后恢复主窗口会补应用记住的窗口几何', () async {
+      provider.setStartupWindowMode(StartupWindowMode.remember);
+      // 尺寸要大于最小窗口尺寸（1080×680），否则会被 clampToMinimum 放大。
+      provider.setWindowBounds(120, 90, 1200, 800, maximized: false);
+      await service.initialize(
+        provider: provider,
+        navigatorKey: GlobalKey<NavigatorState>(),
+      );
+
+      // 模拟 --tray 隐藏启动：main() 没有调用 applyStartupWindowMode。
+      window.calls.clear();
+
+      await service.showMainWindow();
+
+      expect(
+        window.last('setBounds') ?? window.last('setSize'),
+        isNotNull,
+        reason: '隐藏启动跳过几何应用，恢复主窗口时必须补上，否则窗口恒为默认尺寸',
+      );
+      final bounds = window.last('setBounds');
+      if (bounds != null) {
+        expect(bounds.arguments['width'], 1200);
+        expect(bounds.arguments['height'], 800);
+      }
+      expect(
+        ball.has('showMainWindow'),
+        isTrue,
+        reason: '几何补应用后仍要走原生恢复路径显示主窗口',
+      );
+    });
+  });
 }
 
 /// flushPendingSaves 永不完成，用来触发退出看门狗。
@@ -354,12 +449,19 @@ class _HangingProvider extends AppDataProvider {
   Future<void> flushPendingSaves() => _never.future;
 }
 
-/// 统计关机前落盘调用次数。
+/// 统计关机前落盘调用次数与悬浮球位置写入。
 class _CountingProvider extends AppDataProvider {
   int flushCalls = 0;
+  final List<String> ballPositions = <String>[];
 
   @override
   Future<void> flushPendingSaves() async {
     flushCalls++;
+  }
+
+  @override
+  void setBallPosition(int x, int y) {
+    ballPositions.add('$x,$y');
+    super.setBallPosition(x, y);
   }
 }
