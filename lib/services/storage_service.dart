@@ -64,6 +64,14 @@ class DataLoadResult {
   /// 恢复。因此这里既不隔离原文件，也不允许按空库继续。
   final bool keyMismatch;
 
+  /// 主文件不存在（或被误删），但唯一的 `.bak` 存在且解不开（审计 P1-1）。
+  ///
+  /// 这是"最危险的一次启动"：磁盘上还剩一份可能可以人工抢救的备份，
+  /// 若按"首次启动"放行，用户录入数据后第二次保存就会把空库写进 `.bak`
+  /// （已实证复现）。因此必须阻断写入，并在用户确认以空库继续时先把这份
+  /// `.bak` 改名隔离保留。
+  final bool backupUnreadable;
+
   /// 本次启动被隔离的损坏文件路径（`*.corrupt_<毫秒>`）。
   ///
   /// 只用于提示文案；用户确认以空库继续后，该文件仍留在磁盘上供人工抢救。
@@ -78,6 +86,7 @@ class DataLoadResult {
     this.loadFailed = false,
     this.keyUnavailable = false,
     this.keyMismatch = false,
+    this.backupUnreadable = false,
     this.quarantinedPath,
   });
 }
@@ -136,6 +145,20 @@ class StorageService {
     _dataKeyBytes = null;
   }
 
+  /// 测试专用：替换一次 `loadData()` 的返回值。
+  ///
+  /// 审计补强（P1-5）：需要稳定复现「恢复已经写盘、但紧接着读取校验失败」
+  /// 这一磁盘/权限级故障。真实触发要求文件在写完到读回之间被改动，靠
+  /// 文件系统难以稳定构造；这里允许测试直接给出一次失败结果。
+  /// 只在 `loadData()` 入口生效一次，用完必须置回 null。
+  ///
+  /// 生产安全性（提交前收尾）：字段本身是 `static`，没有任何生产调用点
+  /// （`grep -rn debugLoadOverride lib` 只命中本文件的声明与下面那处读取）；
+  /// `loadData()` 读取时用 `kReleaseMode` 短路，release 构建里常量折叠成
+  /// `null`，即使有人通过反射/插件把值写进来也不会改变真实加载行为。
+  @visibleForTesting
+  static DataLoadResult Function()? debugLoadOverride;
+
   /// 初始化本机数据密钥。必须在读取/写入加密数据之前调用。
   ///
   /// 5.0 只支持 LRX3：存在数据但没有密钥时一律拒绝新建，避免新钥解不开原数据。
@@ -177,9 +200,41 @@ class StorageService {
         keyFile,
       ).loadOrCreate(createIfMissing: !dataExists);
     } on FormatException catch (e) {
+      // 审计复核（P2-10 的衍生问题）：独占创建是「先建 0 字节文件占位，再
+      // rename 覆盖上内容」，进程恰好死在两步之间会永久留下空密钥文件。旧实现
+      // 「先写临时文件再改名」不会留下空文件。此时若连主文件/备份都不存在，
+      // 就没有任何数据需要这把钥保护 —— 丢弃空占位、重建一把即可自愈；
+      // 一旦存在数据文件，仍然抛错交给用户处理（绝不用新钥覆盖旧数据）。
+      if (!dataExists && await _isEmptyKeyPlaceholder(keyFile)) {
+        try {
+          await keyFile.delete();
+          _dataKeyBytes = await StorageKeyStore(
+            keyFile,
+          ).loadOrCreate(createIfMissing: true);
+          appendErrorLog('storage_service', '发现空的密钥占位文件且无数据文件，已重建数据密钥', null);
+          return;
+        } on Object catch (retryError, retryStack) {
+          appendErrorLog(
+            'storage_service',
+            retryError,
+            retryStack,
+            context: '重建数据密钥失败',
+          );
+          throw DataKeyUnavailableException('数据密钥无法读取：$retryError');
+        }
+      }
       throw DataKeyUnavailableException(e.message.toString());
     } on Object catch (e) {
       throw DataKeyUnavailableException('数据密钥无法读取：$e');
+    }
+  }
+
+  /// 密钥文件存在且为空（独占占位后进程被打断留下的中间态）。
+  static Future<bool> _isEmptyKeyPlaceholder(File keyFile) async {
+    try {
+      return await keyFile.length() == 0;
+    } on Object catch (_) {
+      return false;
     }
   }
 
@@ -243,6 +298,10 @@ class StorageService {
   }
 
   Future<DataLoadResult> loadData() async {
+    // 审计补强（P1-5）：测试注入的失败结果，只在入口生效一次。
+    // release 构建里 `kReleaseMode` 恒为 true，整段被常量折叠掉。
+    final injected = kReleaseMode ? null : debugLoadOverride;
+    if (injected != null) return injected();
     try {
       await initializeKey();
       final result = await _loadDataOrThrow();
@@ -252,7 +311,10 @@ class StorageService {
       // 若提前扫描，一次目录瞬时读失败会被扫描吞掉，反而把"加载失败、
       // 暂停写入"掩盖成"加载成功"（storage_load_failure_test 覆盖）。
       await _scanQuarantineFiles();
-      if (result.resetToEmpty || result.keyMismatch) {
+      if (result.resetToEmpty ||
+          result.keyMismatch ||
+          result.keyUnavailable ||
+          result.backupUnreadable) {
         // 审计 A-01：隔离或错钥都**不是**可继续写入的状态 —— 必须等用户
         // 明确确认（或换回原密钥）。此前这里直接 `_writesBlocked = false`，
         // 于是"空库 + 可写"在第二次保存时把唯一的 `.bak` 也覆盖掉。
@@ -290,10 +352,7 @@ class StorageService {
         s,
         context: '数据密钥缺失或无法解密，已暂停保存以保护原数据',
       );
-      return DataLoadResult(
-        data: AppData.empty(),
-        keyUnavailable: true,
-      );
+      return DataLoadResult(data: AppData.empty(), keyUnavailable: true);
     } on Object catch (e, s) {
       // 读取目录/文件本身失败：原文件状态未知，暂停全部写入。
       // 这里绝不能返回“空库 + 可写”，否则启动自动备份会立即把空库
@@ -356,6 +415,14 @@ class StorageService {
         _lastWrittenLength = await File(filePath).length();
         _lastWrittenDigest = _digestOfText(backupContent);
         restoredToMain = true;
+        // 审计 B-34：指纹缺失（旧数据）或内容损坏时，`.bak` + 当前密钥能解开，
+        // 说明密钥本身没问题，直接自动恢复并留痕，避免用户面对"打不开"。
+        appendErrorLog(
+          'storage_service',
+          '主文件无法解密，已用备份恢复并写回主文件',
+          null,
+          context: '$filePath.bak',
+        );
       } catch (e) {
         // 写回失败时主文件仍是坏内容：保持 _mainFileParsable=false，
         // 由调用方进入错误态并暂停保存，绝不能谎报“已恢复”。
@@ -375,8 +442,42 @@ class StorageService {
       if (await legacyMain.exists() || await legacyBackup.exists()) {
         throw const UnsupportedStorageFormatException('不兼容的数据目录布局');
       }
+      // 审计 P1-1：主文件不在，但 `.bak` **存在且解不开**。这不是首次启动，
+      // 而是"主文件被误删/被隔离，只剩一份读不出来的备份"——最坏的情况下
+      // 这份 `.bak` 正是唯一可人工抢救的数据。此前这里返回
+      // `resetToEmpty: fileExisted == false`，于是被当成首次启动放行：
+      // 用户录入数据后第二次保存就会满足"主文件可解析 + 长度/摘要一致"，
+      // 把新建的空库写进 `.bak`，最后一份备份也没了（已实证复现）。
+      final backupExists = await File('$filePath.bak').exists();
+      if (backupExists) {
+        _unreadableBackupProtected = true;
+        _quarantinePresent = true;
+        appendErrorLog(
+          'storage_service',
+          '主文件缺失且唯一的备份无法解密，已暂停写入以保护备份',
+          null,
+          context: '$filePath.bak',
+        );
+        return DataLoadResult(data: AppData.empty(), backupUnreadable: true);
+      }
     }
     String? quarantinedPath;
+    // 审计 B-34（方案 1）：区分"内容损坏"与"密钥不对"。
+    // 主文件是一份**格式合法的 LRX3 密文**却用当前密钥解不开时，问题在密钥
+    // （换机、换 Windows 用户、`.enc.key` 被覆盖），数据本身很可能完好；
+    // 这种情况必须以 `keyUnavailable` 停下来并暂停写入，而不是当成内容损坏
+    // 让用户"确认以空库继续"。非密文内容（截断、写成纯文本等）仍按原逻辑
+    // 走 `resetToEmpty`（`test/storage_key_mismatch_test.dart` 固化了该判定）。
+    var sealedButUndecryptable = false;
+    if (fileExisted) {
+      try {
+        sealedButUndecryptable = StorageCrypto.looksEncrypted(
+          await File(filePath).readAsString(),
+        );
+      } on Object catch (e, s) {
+        appendErrorLog('storage_service', e, s, context: '判定主文件内容形态失败');
+      }
+    }
     if (fileExisted) {
       final corrupt =
           '$filePath.corrupt_${DateTime.now().millisecondsSinceEpoch}';
@@ -400,9 +501,20 @@ class StorageService {
       }
       appendErrorLog(
         'storage_service',
-        '主文件与备份均无法解密，已暂停写入并等待用户确认',
+        sealedButUndecryptable
+            ? '主文件是合法密文但当前密钥无法解密，已隔离并暂停写入（换回原 Windows '
+                  '用户/原 .enc.key 后可继续使用该隔离文件）'
+            : '主文件与备份均无法解密，已暂停写入并等待用户确认',
         null,
         context: quarantinedPath ?? '$filePath（隔离失败，原文件保留）',
+      );
+    }
+    if (sealedButUndecryptable) {
+      // 数据被原样保留在隔离文件里，且**没有**用新密钥重建任何文件。
+      return DataLoadResult(
+        data: AppData.empty(),
+        keyUnavailable: true,
+        quarantinedPath: quarantinedPath,
       );
     }
     // 文件存在但解析失败、且无可用备份，视为数据重置（需用户确认后才可写）；
@@ -494,6 +606,13 @@ class StorageService {
   /// 最近一次发现的隔离文件路径（仅用于日志/提示）。
   String? _lastQuarantinePath;
 
+  /// 主文件缺失、唯一 `.bak` 又解不开（审计 P1-1）。
+  ///
+  /// 此时磁盘上还剩一份**可能可以人工抢救**的备份，绝不能被当成"首次启动"
+  /// 放行——否则用户录入数据后第二次保存就会把它顶掉（已实证复现）。
+  /// 用户确认以空库继续时，这份备份会被改名成 `*.corrupt_<毫秒>` 保留。
+  bool _unreadableBackupProtected = false;
+
   /// 指纹写入失败，等下一次保存重试（审计 A-02 规则 3）。
   bool _pendingKeyIdRefresh = false;
 
@@ -528,7 +647,31 @@ class StorageService {
   /// `.bak` 保护不在这里解除：它由 [quarantinePresent] 与"库是否为空"共同
   /// 决定，用户录入第一条数据后自动恢复轮转。
   Future<bool> releaseQuarantineForEmptyLibrary() async {
-    final exists = await File(await dataFilePath).exists();
+    final filePath = await dataFilePath;
+    final exists = await File(filePath).exists();
+    // 审计 P1-1：主文件缺失但唯一 `.bak` 解不开时，用户确认"以空库继续"
+    // 必须先把这份备份改名保留，否则放行后的第二次保存会把它顶掉。
+    if (_unreadableBackupProtected) {
+      final backup = File('$filePath.bak');
+      if (await backup.exists()) {
+        final target =
+            '$filePath.bak.corrupt_${DateTime.now().millisecondsSinceEpoch}';
+        try {
+          await backup.rename(target);
+          _lastQuarantinePath = target;
+          _quarantinePresent = true;
+        } on Object catch (e, s) {
+          appendErrorLog(
+            'storage_service',
+            e,
+            s,
+            context: '无法解密的主文件缺失备份隔离失败，已保持写入阻断',
+          );
+          return false;
+        }
+      }
+      _unreadableBackupProtected = false;
+    }
     _writesBlocked = false;
     _mainFileParsable = !exists;
     _lastWrittenLength = -1;
@@ -570,7 +713,8 @@ class StorageService {
   }
 
   /// 指纹文件路径（与主数据同目录、后缀 [StorageKeyId.fileSuffix]）。
-  Future<File> _keyIdFile() async => File('${await dataFilePath}${StorageKeyId.fileSuffix}');
+  Future<File> _keyIdFile() async =>
+      File('${await dataFilePath}${StorageKeyId.fileSuffix}');
 
   /// 指纹是否与当前数据密钥不匹配（缺失/非法都按"不匹配"以外处理）。
   Future<bool> _keyIdMismatch() async {
@@ -718,6 +862,10 @@ class StorageService {
       }
       final json = jsonEncode(data.toJson());
       final encrypted = _encodeData(json);
+      // 审计 P2-7：备份轮转的中间态标记 —— 快照写成 `.bak.next` 后，只有主文件
+      // 写入成功才把它 rename 成 `.bak`；主文件写失败则丢弃快照，`.bak` 保持
+      // 仍是上一份可用备份（旧实现先覆盖 `.bak` 再写主文件，主写失败就丢档）。
+      var backupRotationPending = false;
       // 写新数据前保留上一份备份，防止文件损坏导致数据全部丢失。
       // 只有"当前主文件确实能解析"时才覆盖 .bak，避免把损坏内容顶掉
       // 最后一份可用备份。
@@ -743,7 +891,9 @@ class StorageService {
         // 审计 A-01：本次运行隔离过损坏文件，而库里仍是空的 —— 此时主文件
         // 就是"用户确认后新建的空库"，覆盖 `.bak` 会把最后一份可用备份顶掉。
         // 用户录入第一条数据后（库非空）自动恢复轮转，无需额外开关。
-        if (canOverwriteBackup && _quarantinePresent && _isEmptyLibraryFor(data)) {
+        if (canOverwriteBackup &&
+            _quarantinePresent &&
+            _isEmptyLibraryFor(data)) {
           canOverwriteBackup = false;
           if (!_backupProtectionNoted) {
             _backupProtectionNoted = true;
@@ -760,12 +910,15 @@ class StorageService {
           // 共用外层 try，磁盘满或 .bak 被杀软/他进程占用时 copy 抛错会让**整次保存
           // 失败、主文件根本不写**，明明可写的数据反而丢失。
           // 备份失败只记日志：主文件能写就一定要写。
+          // 审计 P2-7：轮转顺序改为「先把旧主文件快照到 .bak.next → 主文件写成功
+          // → 再把快照 rename 成 .bak」。此前先 copyAtomic 再 writeString，主文件
+          // 写失败时 .bak 已被升级成新数据，「上一份备份」的回滚点丢一档。
+          // 快照仍取旧主文件内容，保持 .bak = 上一版的既有语义。
           try {
-            // G-21：改原子复制（临时文件 + rename）—— 此前 `file.copy` 直接覆盖，
-            // 中途掉电会留下截断的 .bak。
-            await AtomicFile.copyAtomic(filePath, '$filePath.bak');
+            await AtomicFile.copyAtomic(filePath, '$filePath.bak.next');
+            backupRotationPending = true;
           } catch (e) {
-            debugPrint('覆盖 .bak 失败（不影响主文件写入）：$e');
+            debugPrint('备份快照失败（不影响主文件写入）：$e');
             appendErrorLog('storage_service', e, StackTrace.current);
           }
         } else {
@@ -776,6 +929,16 @@ class StorageService {
       // + Windows 偶发拒绝访问的退避重试）。此前"先删主文件再改名"存在主文件
       // 消失的时间窗，掉电/进程被杀会丢主文件；两套实现也已合并为一套。
       await AtomicFile.writeString(filePath, encrypted);
+      // 主文件已就位，把之前的旧版快照提升为正式 `.bak`。
+      if (backupRotationPending) {
+        try {
+          await AtomicFile.copyAtomic('$filePath.bak.next', '$filePath.bak');
+          backupRotationPending = false;
+        } on Object catch (e, s) {
+          debugPrint('提升 .bak 快照失败（主文件已写入成功）：$e');
+          appendErrorLog('storage_service', e, s);
+        }
+      }
       // 刚写入的内容必然合法：主文件恢复为"可解析"，并记下新长度/摘要。
       _mainFileParsable = true;
       _lastWrittenDigest = _digestOfText(encrypted);
@@ -791,6 +954,14 @@ class StorageService {
     } catch (e) {
       debugPrint('Error saving data: $e');
       appendErrorLog('storage_service', e, StackTrace.current);
+      // 审计 P2-7：主文件写失败时丢弃未提升的快照，避免留下 `.bak.next` 垃圾；
+      // `.bak` 保持为上一份可用备份不变。
+      try {
+        final next = File('${await dataFilePath}.bak.next');
+        if (await next.exists()) await next.delete();
+      } on Object catch (_) {
+        // 清理失败不影响保存结果。
+      }
       return false;
     }
   }
@@ -897,10 +1068,7 @@ class StorageService {
           context: 'iterations=${BackupCrypto.iterationsOf(envelope)}',
         );
       }
-      portableKey = await BackupCrypto.unwrapKeyAsync(
-        envelope,
-        backupPassword,
-      );
+      portableKey = await BackupCrypto.unwrapKeyAsync(envelope, backupPassword);
       if (portableKey == null) return '备份口令错误或密钥文件已损坏';
     }
 
@@ -949,9 +1117,21 @@ class StorageService {
       // 一旦失败，用户选中的那份备份已经被毁掉。审计 P2-1：路径必须按
       // 绝对路径归一化比较（大小写/短路径/符号链接/从"浏览其它位置"选中
       // .bak 时，字符串精确比较会漏判并先毁掉用户选中的备份）。
-      String normalize(String path) =>
-          File(path).absolute.path.replaceAll('\\', '/').toLowerCase();
-      final sourceIsBak = normalize(sourcePath) == normalize('$filePath.bak');
+      // 审计 P2-9：`absolute.path` 只做字符串拼接，解析不了 8.3 短名与符号
+      // 链接（Windows 上 `resolveSymbolicLinks` 走 GetFinalPathNameByHandle，
+      // 会一并还原成长路径）。解析失败（文件不存在/无权限）时退回绝对路径。
+      Future<String> normalize(String path) async {
+        String resolved;
+        try {
+          resolved = await File(path).resolveSymbolicLinks();
+        } on Object catch (_) {
+          resolved = File(path).absolute.path;
+        }
+        return resolved.replaceAll('\\', '/').toLowerCase();
+      }
+
+      final sourceIsBak =
+          await normalize(sourcePath) == await normalize('$filePath.bak');
       if (!sourceIsBak &&
           await mainFile.exists() &&
           await mainFile.length() > 0) {

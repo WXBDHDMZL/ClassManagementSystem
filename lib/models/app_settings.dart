@@ -45,7 +45,8 @@ class AppSettings {
   final int ballX;
   final int ballY;
 
-  /// 管理密码的 SHA-256 哈希；空字符串表示使用出厂默认密码。
+  /// 管理密码的哈希：新格式为 PBKDF2-HMAC-SHA256（`p2:迭代数:盐:哈希`）；
+  /// 兼容旧数据里遗留的裸 SHA-256 哈希与出厂默认值。空字符串表示使用出厂默认密码。
   final String passwordHash;
 
   /// 找回密码用的恢复码哈希（空 = 未设置）。

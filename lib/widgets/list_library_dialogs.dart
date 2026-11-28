@@ -121,8 +121,12 @@ class _StudentManageDialogState extends State<StudentManageDialog> {
           : '将清空当前名单（历史记录不受影响）。确定继续吗？',
     );
     if (confirmed != true || !mounted) return;
-    provider.clearStudents();
-    showTopSnackBar(context, '名单已清空');
+    final saved = provider.clearStudents();
+    showTopSnackBar(
+      context,
+      saved ? '名单已清空' : '名单未清空：当前无权限或无法写入数据文件',
+      isError: !saved,
+    );
   }
 
   @override
@@ -264,7 +268,9 @@ class _StudentManageDialogState extends State<StudentManageDialog> {
     String name,
   ) {
     return Container(
-      key: ValueKey('student_${index}_$name'),
+      // 审计 P3：key 里不要带 index —— 排序/删除后同一行的 key 会变，
+      // 列表动画与行内状态会被错误复用。名单内姓名唯一，用姓名即可。
+      key: ValueKey('student_$name'),
       margin: const EdgeInsets.symmetric(vertical: 2),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainer,
@@ -582,7 +588,8 @@ class _ReasonManageDialogState extends State<ReasonManageDialog> {
     String reason,
   ) {
     return Container(
-      key: ValueKey('reason_${_operationType}_${_periodKey}_${index}_$reason'),
+      // 审计 P3：同上，key 不带 index；同一分组内原因不重复，用分组+原因即可。
+      key: ValueKey('reason_${_operationType}_${_periodKey}_$reason'),
       margin: const EdgeInsets.symmetric(vertical: 2),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainer,

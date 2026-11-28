@@ -91,6 +91,8 @@ Future<void> downloadAndInstallUpdate(
   if (!context.mounted) return;
   BuildContext? progressContext;
   var progressDialogOpen = true;
+  // 审计 P2-23：下载期间允许取消，避免网络异常时进度框永久卡死只能杀进程。
+  var cancelled = false;
   final dialogFuture = showDialog<void>(
     context: context,
     barrierDismissible: false,
@@ -129,6 +131,18 @@ Future<void> downloadAndInstallUpdate(
             },
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              cancelled = true;
+              if (progressDialogOpen) {
+                progressDialogOpen = false;
+                navigator.pop();
+              }
+            },
+            child: const Text('取消'),
+          ),
+        ],
       );
     },
   );
@@ -138,6 +152,7 @@ Future<void> downloadAndInstallUpdate(
     final file = await GitHubUpdateService.downloadAsset(
       asset,
       targetDir: targetDir,
+      shouldCancel: () => cancelled,
       onProgress: (received, total) {
         progress.value = (received: received, total: total);
       },
@@ -190,6 +205,15 @@ Future<void> downloadAndInstallUpdate(
     }
     await Future<void>.delayed(const Duration(milliseconds: 500));
     await DesktopService.instance.quitApp();
+  } on UpdateCancelledException {
+    if (progressDialogOpen) {
+      progressDialogOpen = false;
+      navigator.pop();
+      await dialogFuture;
+    }
+    if (context.mounted) {
+      showTopSnackBar(context, '已取消更新');
+    }
   } on Object catch (e) {
     if (progressDialogOpen) {
       progressDialogOpen = false;

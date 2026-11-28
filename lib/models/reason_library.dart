@@ -84,13 +84,21 @@ class ReasonLibrary {
 
   /// 取指定操作类型与时间段下的可选原因：该时段专属项 + 全时段通用项。
   /// periodKey 为 '_common' 时只返回通用项，避免重复。
+  ///
+  /// 审计 P3：同一原因可能同时登记在专属组与通用组，旧实现直接拼接会出现
+  /// 重复项；这里保持顺序去重。
   List<String> forPeriod(String operationType, String periodKey) {
     final reasonsMap = _mapOf(operationType);
     final specific = periodKey == '_common'
         ? const <String>[]
         : (reasonsMap[periodKey] ?? const <String>[]);
     final common = reasonsMap['_common'] ?? const <String>[];
-    return [...specific, ...common];
+    final merged = <String>[];
+    final seen = <String>{};
+    for (final reason in [...specific, ...common]) {
+      if (seen.add(reason)) merged.add(reason);
+    }
+    return merged;
   }
 
   /// 指定分组的只读原因列表（不存在时返回空列表）。

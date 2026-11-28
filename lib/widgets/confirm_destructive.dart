@@ -38,15 +38,18 @@ Future<bool> confirmDestructive(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: Text(title),
-      content: Text(message),
+      // 审计 P3：长文案（批量删除提示会拼接多名学生）在小窗口/低分辨率下
+      // 会溢出屏幕，必须可滚动。
+      content: SingleChildScrollView(child: Text(message)),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
           child: Text(cancelLabel),
         ),
         ElevatedButton(
-          onPressed:
-              confirmEnabled ? () => Navigator.pop(dialogContext, true) : null,
+          onPressed: confirmEnabled
+              ? () => Navigator.pop(dialogContext, true)
+              : null,
           style: dangerButtonStyle(Theme.of(dialogContext)),
           child: Text(confirmLabel),
         ),
@@ -75,21 +78,23 @@ Future<({bool confirmed, bool option})?> confirmDestructiveWithOption(
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(message),
-            const SizedBox(height: 12),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              value: option,
-              onChanged: (value) => setState(() => option = value ?? false),
-              title: Text(optionLabel),
-              subtitle: optionHint == null ? null : Text(optionHint),
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(message),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: option,
+                onChanged: (value) => setState(() => option = value ?? false),
+                title: Text(optionLabel),
+                subtitle: optionHint == null ? null : Text(optionHint),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -97,10 +102,8 @@ Future<({bool confirmed, bool option})?> confirmDestructiveWithOption(
             child: Text(cancelLabel),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              (confirmed: true, option: option),
-            ),
+            onPressed: () =>
+                Navigator.pop(dialogContext, (confirmed: true, option: option)),
             style: dangerButtonStyle(Theme.of(dialogContext)),
             child: Text(confirmLabel),
           ),

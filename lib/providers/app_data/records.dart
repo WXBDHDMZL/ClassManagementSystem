@@ -242,11 +242,17 @@ mixin _RecordsDomain on _ProviderBase {
     // B-06：同样的保护扩展到"已删除/改名的自定义时段"——key 非空但当前
     // 时段表里已找不到（isKnownPeriodKey=false），且老师没有重新选择时，
     // 保留原 key + 显示名快照。
+    // 审计 P1-2 根因修复：编辑对话框会用 `editRecord.periodKey` 预选时段，
+    // 时段被删除后这个 key 仍然非空，于是原来的 `periodKey.isEmpty &&` 判断
+    // 恒为 false，保护形同虚设 —— 保存时 `_buildRecord` 按未知 key 重算，
+    // 而 `getTimePeriodName` 对未知 key **原样返回 key**，`periodName` 就被
+    // 永久改写成 `custom_xxx`（已实证复现）。这里改成"老师没有换时段"即保护：
+    // 传入 key 与记录原 key 相同、且该 key 在当前时段表里已无法识别。
+    final sameAsOriginal = periodKey == record.periodKey;
     final keepUnidentifiedPeriod =
-        periodKey.isEmpty &&
+        (sameAsOriginal || periodKey.isEmpty) &&
         (record.periodKey.isEmpty ||
-            (!isKnownPeriodKey(record.periodKey) &&
-                record.periodName.isNotEmpty));
+            (!isKnownPeriodKey(record.periodKey) && record.periodName.isNotEmpty));
     // N-2：编辑与新增必须同一套长度/净化规则（此前编辑不截断 →
     // 同一份数据里存在两种规则）。这里直接复用 _buildRecord 的净化逻辑。
     final updatedRecord = _buildRecord(
@@ -463,7 +469,12 @@ mixin _RecordsDomain on _ProviderBase {
           );
           changed++;
         case _RecordUndoKind.delete:
-          for (final entry in undo.removedEntries) {
+          // 审计 P3：多选删除时各条记录带的是**删除前**的 index，按原顺序
+          // 逐条 insert 会在同一天多选删除后把顺序插乱。改为按 index 升序
+          // 依次插入（后插的高位 index 仍指向原始位置），即可还原原顺序。
+          final entries = [...undo.removedEntries]
+            ..sort((a, b) => a.index.compareTo(b.index));
+          for (final entry in entries) {
             final records = _appData.recordsByDate.putIfAbsent(
               entry.date,
               () => <StudentRecord>[],

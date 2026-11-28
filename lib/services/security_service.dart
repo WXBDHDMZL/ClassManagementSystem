@@ -112,6 +112,10 @@ class SecurityService {
   /// V2.36.0 起从 20,000 提升到 100,000，提高离线暴力破解成本。
   static const int _pbkdf2Iterations = 100000;
 
+  /// 校验时允许的最大迭代数（审计 P3）：哈希来自数据文件，被篡改成
+  /// 十亿级会让一次校验长时间占满 Isolate，等于拒绝服务。
+  static const int maxPbkdf2Iterations = 1000000;
+
   /// 计算密码哈希（首尾空格忽略，与实际校验口径一致）。
   /// 新设置的密码一律使用加盐多轮格式，并**把迭代次数写进哈希**，
   /// 以后调整默认迭代次数不会让已有密码失效。
@@ -156,6 +160,9 @@ class SecurityService {
     try {
       final iterations = int.tryParse(parts[0]);
       if (iterations == null || iterations <= 0) return false;
+      // 审计 P3：迭代数来自数据文件，被篡改成极大值会让校验长时间占满
+      // Isolate（等于拒绝服务）。超过上限直接判失败，不再计算。
+      if (iterations > maxPbkdf2Iterations) return false;
       final salt = base64Decode(parts[1]);
       final expected = base64Decode(parts[2]);
       final actual = _pbkdf2(utf8.encode(input), salt, iterations);

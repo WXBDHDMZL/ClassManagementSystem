@@ -21,6 +21,7 @@ import '../utils/record_text.dart';
 import '../utils/student_name.dart';
 import 'statistics_service.dart';
 import 'import_limits.dart';
+import 'xlsx_merge.dart';
 import 'xlsx_reader.dart';
 
 /// 导入预览结果：可导入的记录 + 供用户确认的统计信息。
@@ -82,6 +83,16 @@ class ImportService {
   static const List<String> _remarkHeaders = ['备注'];
   static const List<String> _recordedByHeaders = ['记录人'];
 
+  /// 记录表的工作表挑选关键词（审计 P2-16）：与 [_matchHeader] 同口径，
+  /// 供 [XlsxReader] 兜底路径挑选含记录表头的工作表。
+  static const Set<String> _sheetHeaderKeywords = {
+    '日期',
+    '学生姓名',
+    '姓名',
+    '操作项目',
+    '类型',
+  };
+
   static int _idCounter = 0;
 
   /// 解析 Excel 字节：在全部工作表中找第一个含记录表头的工作表。
@@ -100,15 +111,24 @@ class ImportService {
         final workbook = excel.Excel.decodeBytes(bytes);
         sheets = [
           for (final name in workbook.tables.keys)
-            [
-              for (final row in workbook.tables[name]!.rows)
-                row.map((cell) => _cellText(cell?.value)).toList(),
-            ],
+            // 审计 P2-13：合并单元格只有左上角有值，纵向合并的日期/姓名会让
+            // 后续行被当成"缺姓名/缺日期"静默跳过。先把合并区铺满再解析。
+            XlsxMerge.fill(
+              [
+                for (final row in workbook.tables[name]!.rows)
+                  row.map((cell) => _cellText(cell?.value)).toList(),
+              ],
+              workbook.tables[name]!.spannedItems,
+            ),
         ];
       } on Object {
-        final rows = XlsxReader.readRows(bytes);
-        if (rows.isEmpty) rethrow;
-        sheets = [rows];
+        // 审计 P2-16：兜底路径同样按表头关键词挑表（此前无条件取第一张非空表）。
+        final parsed = XlsxReader.readRowsWithSpans(
+          bytes,
+          headerKeywords: _sheetHeaderKeywords,
+        );
+        if (parsed.rows.isEmpty) rethrow;
+        sheets = [XlsxMerge.fill(parsed.rows, parsed.spans)];
       }
       for (final rows in sheets) {
         if (_findHeaderRow(rows) == null) continue;
@@ -590,6 +610,13 @@ class ImportService {
   }
 
   /// 极简 CSV 解析：支持双引号包裹字段（含逗号与换行）与 "" 转义。
+  ///
+  /// 审计 P1-6 修复（RFC 4180 状态机）：
+  /// - 只有**字段起点**的引号才进入引号态。此前字段中间出现裸引号
+  ///   （如 `张三"备注`）也会进入引号态，把后续所有逗号/换行都吞进字段，
+  ///   整批数据被静默并成一行。
+  /// - 文件结束时若仍处于引号态，说明引号未配对：抛出 [FormatException]，
+  ///   由调用方按"解析失败"提示用户，绝不静默返回残缺结果。
   static List<List<String>> _parseCsv(String text) {
     var content = text;
     if (content.startsWith('\uFEFF')) {
@@ -599,6 +626,8 @@ class ImportService {
     var row = <String>[];
     final field = StringBuffer();
     var inQuotes = false;
+    // 当前字段是否还没有任何字符（用于判断"字段起点"）。
+    var atFieldStart = true;
     for (var i = 0; i < content.length; i++) {
       final char = content[i];
       if (inQuotes) {
@@ -608,17 +637,23 @@ class ImportService {
             i++;
           } else {
             inQuotes = false;
+            // 闭合引号之后不应再有裸字符（RFC 4180）；这里宽容处理：后续字符
+            // 继续按普通字段内容追加，但不再允许重新进入引号态。
+            atFieldStart = false;
           }
         } else {
           field.write(char);
         }
         continue;
       }
-      if (char == '"') {
+      if (char == '"' && atFieldStart) {
         inQuotes = true;
-      } else if (char == ',') {
+        continue;
+      }
+      if (char == ',') {
         row.add(field.toString());
         field.clear();
+        atFieldStart = true;
       } else if (char == '\n' || char == '\r') {
         if (char == '\r' && i + 1 < content.length && content[i + 1] == '\n') {
           i++;
@@ -627,9 +662,14 @@ class ImportService {
         field.clear();
         rows.add(row);
         row = <String>[];
+        atFieldStart = true;
       } else {
         field.write(char);
+        atFieldStart = false;
       }
+    }
+    if (inQuotes) {
+      throw const FormatException('CSV 引号未配对，文件可能已损坏');
     }
     if (field.isNotEmpty || row.isNotEmpty) {
       row.add(field.toString());

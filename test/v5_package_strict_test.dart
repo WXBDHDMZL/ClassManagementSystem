@@ -48,7 +48,6 @@ void main() {
       'attendanceStatuses',
       'attendanceAbsentStatuses',
       'records',
-      'attendance',
     ];
     for (final key in required) {
       final json = validPackage()..remove(key);
@@ -58,6 +57,24 @@ void main() {
         reason: '缺 $key 时必须拒绝整包',
       );
     }
+  });
+
+  test('审计 P2-19：缺 attendance 视为"未提供"，解析为 null 而非拒绝整包', () {
+    final json = validPackage()..remove('attendance');
+    final parsed = TransferService.parsePackage(jsonEncode(json));
+    expect(parsed, isNotNull, reason: '缺 attendance 不能整包拒绝');
+    expect(parsed!.attendance, isNull, reason: 'null 表示包内未提供考勤，还原时保留本机');
+
+    // 显式空数组是"包内确实没有考勤"，语义与缺失不同。
+    final explicitEmpty = validPackage()..['attendance'] = <Object>[];
+    final parsedEmpty = TransferService.parsePackage(jsonEncode(explicitEmpty));
+    expect(parsedEmpty, isNotNull);
+    expect(parsedEmpty!.attendance, isEmpty);
+  });
+
+  test('attendance 类型错误仍然拒绝整包', () {
+    final json = validPackage()..['attendance'] = 'x';
+    expect(TransferService.parsePackage(jsonEncode(json)), isNull);
   });
 
   test('字段类型错误直接拒绝', () {

@@ -300,6 +300,12 @@ def lane_commit(args: argparse.Namespace, lanes: dict) -> int:
     code = run_gates()
     if code != 0:
         return code
+    # 提交前收尾：tools 下的自测（含 test_native_guards.py 的原生守卫）
+    # 此前只在 fast 车道"仅 tools 改动"时运行，commit/full 车道（即 CI）
+    # 从不执行 —— 原生守卫等于没有门禁。这里补上，代价只有几秒。
+    code = run_tool_tests()
+    if code != 0:
+        return code
     code = run_analyze()
     if code != 0:
         return code
@@ -312,6 +318,10 @@ def lane_full(args: argparse.Namespace, lanes: dict) -> int:
             print(item)
         return 0
     code = run_gates()
+    if code != 0:
+        return code
+    # 同 commit 车道：full（CI 主门禁）也必须跑 tools 自测。
+    code = run_tool_tests()
     if code != 0:
         return code
     code = run_analyze()

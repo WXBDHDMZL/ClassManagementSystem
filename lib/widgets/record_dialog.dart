@@ -94,6 +94,10 @@ class _RecordDialogState extends State<RecordDialog> {
   /// 用户是否手动改过时段。自动预选的时段在提交时要按当前时刻重新校准：
   /// 对话框可能跨过 06:20 的归属日边界，直接沿用旧时段会把记录写错日期。
   bool _periodTouched = false;
+
+  /// 审计 P3：提交防重入标记。连点"保存"会重复走写入分支，导致同一条
+  /// 记录被加两次；校验失败的分支会把它复位，允许重试。
+  bool _submitted = false;
   List<String> _selectedReasons = [];
 
   /// 原因较多时默认只显示常用的一部分，其余折叠（已选项始终可见）。
@@ -272,6 +276,9 @@ class _RecordDialogState extends State<RecordDialog> {
   }
 
   void _submit() {
+    // 审计 P3：连点"保存"会重复走一遍写入分支。第一次提交后立刻置位，
+    // 避免同一帧内的第二次点击再写一条记录。
+    if (_submitted) return;
     final identityProvider = context.read<AppDataProvider>();
     if (identityProvider.identityFeatureEnabled &&
         identityProvider.activeIdentity == null) {
@@ -300,6 +307,10 @@ class _RecordDialogState extends State<RecordDialog> {
     // 追加记录（事后补录）与当天记录用不同提示文案。
     final isAppend = widget.targetDate != null || widget.isAppend;
 
+    // 校验都通过了，从这里开始才是真正的写入；置位拦重复提交，
+    // 失败分支再复位，保证"没写成功可以再试一次"。
+    _submitted = true;
+
     if (widget.editRecord != null) {
       final updated = provider.updateRecord(
         widget.editRecord!.id,
@@ -310,6 +321,7 @@ class _RecordDialogState extends State<RecordDialog> {
         date: widget.targetDate,
       );
       if (!updated) {
+        _submitted = false;
         showTopSnackBar(context, '未找到该记录，可能已被删除', isError: true);
         return;
       }
@@ -323,6 +335,7 @@ class _RecordDialogState extends State<RecordDialog> {
     }
 
     if (!provider.canActiveIdentityAddRecord) {
+      _submitted = false;
       showTopSnackBar(context, '当前身份没有普通模式新增记录权限', isError: true);
       return;
     }
@@ -341,6 +354,7 @@ class _RecordDialogState extends State<RecordDialog> {
         date: widget.targetDate,
       );
       if (added <= 0) {
+        _submitted = false;
         showTopSnackBar(context, '没有添加任何记录', isError: true);
         return;
       }

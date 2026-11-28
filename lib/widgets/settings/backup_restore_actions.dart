@@ -232,6 +232,9 @@ class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
   final _confirmation = TextEditingController();
   String? _error;
 
+  /// 审计 P3：一次性提交标记，防止回车 + 连点导致重复 pop。
+  bool _submitted = false;
+
   @override
   void dispose() {
     _password.dispose();
@@ -240,6 +243,9 @@ class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
   }
 
   void _submit() {
+    // 审计 P3：回车提交与"确定"按钮都可能触发；快速连按时第二次 pop 会把
+    // 调用方的页面一起弹掉。用一个一次性标记拦住重复提交。
+    if (_submitted) return;
     final value = _password.text;
     if (value.length < 8) {
       setState(() => _error = '备份口令至少 8 个字符');
@@ -257,6 +263,7 @@ class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
       setState(() => _error = '两次输入的备份口令不一致');
       return;
     }
+    _submitted = true;
     Navigator.of(context).pop(value);
   }
 

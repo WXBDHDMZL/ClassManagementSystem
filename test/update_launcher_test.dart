@@ -103,6 +103,50 @@ void main() {
     expect(script, contains(r"C:\a''b\setup.exe"));
   });
 
+  // 审计补强（未验证项：MSI 参数转义）：真机安装前先用静态断言锁住
+  // 「路径整体被双引号包裹 + 单引号加倍 + 大小写不敏感的 .msi 判定」。
+  group('MSI 参数转义', () {
+    test('路径含单引号时按 PowerShell 字面量加倍，且整体仍在双引号内', () {
+      final script = UpdateLauncher.buildWaitScript(
+        processId: 3,
+        installerPath: r"C:\更新\班'级.msi",
+      );
+
+      expect(
+        script,
+        contains('-ArgumentList \'/i "C:\\更新\\班\'\'级.msi" /qn /norestart\''),
+      );
+      expect(script, contains('msiexec.exe'));
+      expect(script, isNot(contains('/SILENT')));
+    });
+
+    test('路径含空格时不会被拆成多个 msiexec 参数', () {
+      final script = UpdateLauncher.buildWaitScript(
+        processId: 4,
+        installerPath: r'C:\Program Files\班级管理系统\setup.msi',
+      );
+
+      expect(
+        script,
+        contains(
+          '-ArgumentList \'/i "C:\\Program Files\\班级管理系统\\setup.msi" '
+          '/qn /norestart\'',
+        ),
+      );
+    });
+
+    test('.MSI 大写后缀同样走 msiexec 静默安装', () {
+      final script = UpdateLauncher.buildWaitScript(
+        processId: 5,
+        installerPath: r'C:\更新\SETUP.MSI',
+      );
+
+      expect(script, contains("Start-Process -FilePath 'msiexec.exe'"));
+      expect(script, contains('/qn /norestart'));
+      expect(script, isNot(contains('/SILENT')));
+    });
+  });
+
   test('助手脚本写入临时 ps1 且带 UTF-8 BOM', () async {
     final file = await UpdateLauncher.writeHelperScript(
       processId: 99,

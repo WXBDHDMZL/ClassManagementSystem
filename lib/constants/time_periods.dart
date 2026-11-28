@@ -272,6 +272,11 @@ String periodNameForRecord(String periodKey, String storedName,
 String matchTimePeriodKey(String name, [List<Map<String, String>>? periods]) {
   final value = name.trim();
   if (value.isEmpty) return '';
+  // 审计 P1-4：导出时"全天"记录的时段列写的是 [allDayPeriodLabel]，回导时
+  // 这里必须能还原成 [allDayPeriodKey]。此前只遍历日常时段，全天一律返回空
+  // 字符串 —— 导入判重键里的时段为空、而库里存的是 `all_day`，两边永不相等，
+  // 同一份导出文件反复回导会成倍产生重复记录。
+  if (value == allDayPeriodLabel) return allDayPeriodKey;
   // 修复（审查 P2-10）：与 getTimePeriodShortName(1.10 修复) 同口径 ——
   // 标签先 trim 再取简称，否则带尾随/连续空格的自定义标签反查失败，
   // 导入的时段会静默落到空 key。

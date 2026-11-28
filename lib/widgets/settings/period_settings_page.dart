@@ -156,8 +156,14 @@ class _PeriodSettingsPageState extends State<PeriodSettingsPage> {
     // P1-1 修复：此前用 effectivePeriods() 当"出厂基线"，而它在存在自定义时段时
     // 返回的就是自定义列表本身，导致"不动直接保存"会把自定义时段清空回出厂 9 段。
     // 现在无条件保存用户当前编辑的时段。
-    provider.setPeriods(periods);
-    showTopSnackBar(context, '已保存，记录预选、显示与导出将使用新的时段');
+    final saved = provider.setPeriods(periods);
+    showTopSnackBar(
+      context,
+      saved
+          ? '已保存，记录预选、显示与导出将使用新的时段'
+          : '时段未保存：当前无法写入数据文件，请先处理数据提示后重试',
+      isError: !saved,
+    );
   }
 
   Future<void> _resetToDefaults() async {
@@ -182,8 +188,15 @@ class _PeriodSettingsPageState extends State<PeriodSettingsPage> {
           _PeriodRow(entry.key, entry.value),
       ]);
     setState(() {});
-    Provider.of<AppDataProvider>(context, listen: false).setPeriods(const []);
-    showTopSnackBar(context, '已恢复出厂时段设置');
+    final saved = Provider.of<AppDataProvider>(
+      context,
+      listen: false,
+    ).setPeriods(const []);
+    showTopSnackBar(
+      context,
+      saved ? '已恢复出厂时段设置' : '恢复出厂未保存：当前无法写入数据文件，请先处理数据提示后重试',
+      isError: !saved,
+    );
   }
 
   @override

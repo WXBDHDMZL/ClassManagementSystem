@@ -373,8 +373,13 @@ class _PackageImportDialogState extends State<_PackageImportDialog> {
             row(
               'attendance',
               '考勤记录',
+              // 审计 P2-18：此前无论勾不勾"整包还原"都写"将清空本机考勤"，
+              // 但分类补充导入对空考勤是直接跳过（本机考勤原样保留），
+              // 提示与行为相反。这里按当前选择给出真实语义。
               data.attendance!.isEmpty
-                  ? '0 条（将清空本机考勤）'
+                  ? (_replaceAll
+                        ? '0 条（整包还原将清空本机考勤）'
+                        : '0 条（无考勤可补充，本机考勤保持不变）')
                   : '${data.attendance!.length} 条（同一天同一学生以数据包为准）',
             ),
         ],

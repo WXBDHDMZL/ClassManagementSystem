@@ -15,6 +15,7 @@ import 'dart:typed_data';
 
 import '../constants/time_periods.dart';
 import '../utils/utf16.dart';
+import 'import_limits.dart';
 import 'transfer_service.dart';
 
 /// 原因库导入预览：解析成功的条目与无法识别的行数。
@@ -86,25 +87,32 @@ class LibraryImportService {
     required List<int> bytes,
     required String fileName,
   }) async {
+    // 审计 P2-14：原因库/时段库导入此前没有体积与行数上限，与记录、名单
+    // 导入口径不一致，超大文件会把内存吃光。这里与它们统一。
+    ImportLimits.ensureFileBytes(bytes.length);
     final extension = _extensionOf(fileName);
     if (extension == 'txt') {
       return parseReasonsText(_decodeText(bytes));
     }
     if (extension == 'csv') {
       return _parseReasonRows(
-        await TransferService.readRowsAsync(
-          bytes,
-          isCsv: true,
-          headerKeywords: const {'类型', '原因'},
+        _ensureRows(
+          await TransferService.readRowsAsync(
+            bytes,
+            isCsv: true,
+            headerKeywords: const {'类型', '原因'},
+          ),
         ),
       );
     }
     if (extension == 'xlsx') {
       return _parseReasonRows(
-        await TransferService.readRowsAsync(
-          bytes,
-          isCsv: false,
-          headerKeywords: const {'类型', '原因'},
+        _ensureRows(
+          await TransferService.readRowsAsync(
+            bytes,
+            isCsv: false,
+            headerKeywords: const {'类型', '原因'},
+          ),
         ),
       );
     }
@@ -130,29 +138,41 @@ class LibraryImportService {
     required List<int> bytes,
     required String fileName,
   }) async {
+    // 审计 P2-14：同 [parseReasonsFile]，补上体积与行数上限。
+    ImportLimits.ensureFileBytes(bytes.length);
     final extension = _extensionOf(fileName);
     if (extension == 'txt') {
       return parsePeriodsText(_decodeText(bytes));
     }
     if (extension == 'csv') {
       return _parsePeriodRows(
-        await TransferService.readRowsAsync(
-          bytes,
-          isCsv: true,
-          headerKeywords: const {'时段', '标签'},
+        _ensureRows(
+          await TransferService.readRowsAsync(
+            bytes,
+            isCsv: true,
+            headerKeywords: const {'时段', '标签'},
+          ),
         ),
       );
     }
     if (extension == 'xlsx') {
       return _parsePeriodRows(
-        await TransferService.readRowsAsync(
-          bytes,
-          isCsv: false,
-          headerKeywords: const {'时段', '标签'},
+        _ensureRows(
+          await TransferService.readRowsAsync(
+            bytes,
+            isCsv: false,
+            headerKeywords: const {'时段', '标签'},
+          ),
         ),
       );
     }
     throw const FormatException('时段表只支持 .xlsx、.csv、.txt 文件');
+  }
+
+  /// 审计 P2-14：表格解析出的行数同样要挡（体积小但行数极多的表）。
+  static List<List<String>> _ensureRows(List<List<String>> rows) {
+    ImportLimits.ensureRowCount(rows.length, what: '表格');
+    return rows;
   }
 
   static PeriodImportPreview _parsePeriodRows(List<List<String>> rows) {
@@ -197,6 +217,11 @@ class LibraryImportService {
         }
       }
       if (key.isEmpty) key = keyByLabel[label] ?? '';
+      // 审计 P2-17：一列格式（只写标签）此前只做完整 label 精确匹配，
+      // 而导出/粘贴常见的写法是简称（"上课"）或带尾随空格，反查失败就落到
+      // 下面新生成 `custom_*` —— 同一份时段表每导一次就多一套时段。
+      // 这里与记录导入统一走 [matchTimePeriodKey]（认完整标签与简称）。
+      if (key.isEmpty) key = matchTimePeriodKey(label, known);
       if (key.isEmpty) {
         key = 'custom_${DateTime.now().microsecondsSinceEpoch}_$i';
       }

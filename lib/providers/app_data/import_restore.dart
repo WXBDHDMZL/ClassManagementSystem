@@ -287,6 +287,12 @@ mixin _ImportRestoreDomain on _ProviderBase {
             removed++;
             removedIds.add(record.id);
             if (entry.value.isEmpty) _appData.recordsByDate.remove(entry.key);
+            // 审计 P2-3：与 deleteRecord 同口径 —— 不保留考勤时，该记录派生
+            // 的考勤必须一并撤销；此前这里只清链接，派生考勤被留成"手工考勤"，
+            // 两条删除路径行为分叉。
+            if (!keepAttendance) {
+              _removeLinkedAttendance(entry.key, record.id);
+            }
             _log(
               '删除记录',
               '${entry.key} · ${record.studentName} · ${record.operationType}（保留考勤）',
@@ -361,6 +367,32 @@ mixin _ImportRestoreDomain on _ProviderBase {
       _log('删除记录', '$denied 条记录无权限删除，已跳过');
     }
     return removed;
+  }
+
+  /// 覆盖重复记录的原子流程：删除旧记录与写入新记录在同一批次内完成。
+  ///
+  /// 审计 P2-8：此前 UI 里 `deleteRecords` 与 `importRecords` 各自 `_save()`，
+  /// 两次独立落盘之间失败/崩溃就永久丢数据（旧记录已删、新记录未写）。这里用
+  /// `_batch` 把两步合进同一批，只在最后落盘一次。
+  ({int overwritten, int imported}) replaceDuplicateRecords(
+    Iterable<StudentRecord> duplicates,
+    Iterable<StudentRecord> records, {
+    bool syncAttendance = false,
+    bool keepAttendance = true,
+    void Function(int count)? onAttendanceSynced,
+  }) {
+    var overwritten = 0;
+    var imported = 0;
+    _batch(() {
+      overwritten = deleteRecords(duplicates, keepAttendance: keepAttendance);
+      imported = importRecords(
+        records.toList(),
+        syncAttendance: syncAttendance,
+        overwriteAttendance: true,
+        onAttendanceSynced: onAttendanceSynced,
+      );
+    });
+    return (overwritten: overwritten, imported: imported);
   }
 
   /// 合并名单：补充缺失的姓名，返回新增人数（保留现有名单与顺序）。

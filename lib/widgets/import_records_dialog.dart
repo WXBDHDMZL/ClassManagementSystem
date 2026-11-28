@@ -109,16 +109,16 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
       () {
         if (_overwriteDuplicates && preview.duplicates.isNotEmpty) {
           // 覆盖 = 先删旧记录，再把表格里的这一行写回去（否则会只删不写、丢数据）。
-          overwritten = provider.deleteRecords(
+          // 审计 P2-8：删除与写入必须在同一批次内完成、只落盘一次；此前两次
+          // 独立 `_save()`，中途失败会永久丢数据（旧记录已删、新记录未写）。
+          final result = provider.replaceDuplicateRecords(
             preview.duplicates,
-            keepAttendance: true,
-          );
-          imported = provider.importRecords(
             [...preview.records, ...preview.duplicateImports],
             syncAttendance: syncAttendance,
-            overwriteAttendance: true,
             onAttendanceSynced: onAttendanceSynced,
           );
+          overwritten = result.overwritten;
+          imported = result.imported;
         } else {
           imported = provider.importRecords(
             preview.records,
@@ -183,7 +183,11 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
     final theme = Theme.of(context);
     final muted = mutedTextColor(theme, 0.65);
     final preview = widget.preview;
-    final canImport = preview.hasData;
+    // 审计 P3：文件里全部是"与现有记录重复"的行时，`preview.records` 为空，
+    // 旧实现据此禁用按钮，用户勾了"覆盖重复"也点不动——只能放弃导入。
+    // 覆盖模式下只要有重复行可写回就算有数据。
+    final canImport = preview.hasData ||
+        (_overwriteDuplicates && preview.duplicateImports.isNotEmpty);
     final provider = Provider.of<AppDataProvider>(context, listen: false);
     final attendanceCandidates = _attendanceCandidateCount(provider);
 

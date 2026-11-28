@@ -169,7 +169,7 @@ class OperationLogService {
         (maxLines == null || maxLines <= 0 || maxLines > limit) ? limit : maxLines;
     final length = await file.length();
     if (length == 0) return const [];
-    final chunks = <String>[];
+    final chunks = <List<int>>[];
     var position = length;
     var newlineCount = 0;
     final raf = await file.open();
@@ -179,14 +179,22 @@ class OperationLogService {
         position -= readSize;
         await raf.setPosition(position);
         final bytes = await raf.read(readSize);
-        final text = utf8.decode(bytes, allowMalformed: true);
-        newlineCount += '\n'.allMatches(text).length;
-        chunks.add(text);
+        // 审计 P3：分块只切字节，不在块内单独做 UTF-8 解码。原实现逐块
+        // `utf8.decode`，块边界落在多字节字符中间时会产生替换符，令那一行
+        // 密文解不开而被静默跳过（日志界面每次少一条）。
+        newlineCount += '\n'.allMatches(
+          utf8.decode(bytes, allowMalformed: true),
+        ).length;
+        chunks.add(bytes);
       }
     } finally {
       await raf.close();
     }
-    final content = chunks.reversed.join();
+    final joined = <int>[];
+    for (final chunk in chunks.reversed) {
+      joined.addAll(chunk);
+    }
+    final content = utf8.decode(joined, allowMalformed: true);
     final lines = content
         .split('\n')
         .map((line) => line.trimRight())

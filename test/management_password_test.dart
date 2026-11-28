@@ -26,8 +26,7 @@ void main() {
         settings,
         AuthCredential.operation,
         'abcd1234',
-      ))
-          .success,
+      )).success,
       isTrue,
     );
   });
@@ -65,8 +64,7 @@ void main() {
           settings,
           AuthCredential.operation,
           '错误',
-        ))
-            .success,
+        )).success,
         isFalse,
       );
     }
@@ -82,8 +80,7 @@ void main() {
         settings,
         AuthCredential.operation,
         'abcd1234',
-      ))
-          .success,
+      )).success,
       isFalse,
     );
 
@@ -98,9 +95,45 @@ void main() {
         settings,
         AuthCredential.operation,
         'abcd1234',
-      ))
-          .success,
+      )).success,
       isTrue,
+    );
+  });
+
+  test('审计 P3：并发提交错误密码也逐个计数，第 5 次立即锁定', () async {
+    // 旧实现把"读失败计数 → +1 → 写回"放在 PBKDF2 await 之后，5 个并发请求
+    // 都读到同一个旧值、都写回 1，锁定阈值被完全绕过（10 次并发只记 1 次）。
+    // 现在改为 await 之前同步登记，因此并发也必须计数。
+    final hash = SecurityService.hashPassword('abcd1234');
+    final settings = AppSettings.fromJson({
+      'themeMode': 0,
+      'passwordEnabled': true,
+      'passwordHash': hash,
+    });
+    addTearDown(() async {
+      final guardFile = await LocalStoragePaths.authGuardFile();
+      if (await guardFile.exists()) await guardFile.delete();
+    });
+
+    final results = await Future.wait([
+      for (var i = 0; i < AuthService.maxFailuresBeforeLock; i++)
+        AuthService.verify(settings, AuthCredential.operation, '错误'),
+    ]);
+
+    expect(
+      results.where((result) => result.locked),
+      isNotEmpty,
+      reason: '并发错误达到阈值必须触发锁定，而不是各自只记 1 次',
+    );
+    expect(AuthService.lockRemaining(AuthCredential.operation), isNotNull);
+    expect(
+      (await AuthService.verify(
+        settings,
+        AuthCredential.operation,
+        'abcd1234',
+      )).success,
+      isFalse,
+      reason: '锁定期间正确密码同样应被拒绝',
     );
   });
 }

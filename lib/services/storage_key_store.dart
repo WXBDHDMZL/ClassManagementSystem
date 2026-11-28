@@ -44,12 +44,37 @@ class StorageKeyStore {
         (_) => Random.secure().nextInt(256),
       ),
     );
-    await _write(key);
-    return key;
+    // 审计 P2-10：此前是「exists() 检查 → 写临时文件 → rename」，两个实例
+    // 同时首启会各自生成一把钥并先后 rename，最后落盘的钥与先启动实例
+    // 内存里的钥不同 —— 先启动的那个实例此后写出的数据下次启动就解不开。
+    // 这里改用**独占创建**占住 key 文件路径：抢到的实例写入自己的钥，
+    // 没抢到的实例丢弃刚生成的钥、改读磁盘上已有的那把。
+    if (await _reserveKeyFile()) {
+      await _write(key);
+      return key;
+    }
+    return _readExisting();
+  }
+
+  /// 以独占方式创建密钥文件占位；已存在则返回 false（说明另一个实例先到）。
+  Future<bool> _reserveKeyFile() async {
+    await keyFile.parent.create(recursive: true);
+    try {
+      await keyFile.create(exclusive: true);
+      return true;
+    } on FileSystemException {
+      return false;
+    }
   }
 
   Future<Uint8List> _readExisting() async {
-    final raw = (await keyFile.readAsString()).trim();
+    // 占位与写入之间有一个极短的空文件窗口：另一个实例此刻读到空文件会误判
+    // 为「密钥损坏」。这里短暂重试，把瞬时窗口与真正的空文件区分开。
+    var raw = (await keyFile.readAsString()).trim();
+    for (var attempt = 0; attempt < 5 && raw.isEmpty; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      raw = (await keyFile.readAsString()).trim();
+    }
     if (raw.isEmpty) {
       throw const FormatException('数据密钥文件为空，已停止启动以保护现有数据');
     }

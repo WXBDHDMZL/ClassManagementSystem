@@ -44,62 +44,77 @@ class StudentCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected
-              ? theme.colorScheme.primary.withValues(alpha: 0.25)
-              : theme.colorScheme.surfaceContainer,
-          border: Border.all(
+    return Semantics(
+      // 审计 P3：卡片此前只有 GestureDetector，读屏软件读不到"谁、被点没被点"，
+      // 键盘也无法聚焦。这里补语义标签与按钮角色。
+      button: true,
+      selected: isSelected,
+      label: '$name，${isSelected ? '已选中' : '未选中'}',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
             color: isSelected
-                ? theme.colorScheme.primary
-                : theme.colorScheme.outline,
-            width: isSelected ? 2 : 1,
+                ? theme.colorScheme.primary.withValues(alpha: 0.25)
+                : theme.colorScheme.surfaceContainer,
+            border: Border.all(
+              color: isSelected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.outline,
+              width: isSelected ? 2 : 1,
+            ),
+            borderRadius: AppRadius.card,
           ),
-          borderRadius: AppRadius.card,
-        ),
-        child: Stack(
-          children: [
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                // 姓名**任何情况下都必须完整显示**：不省略号、不换行。
-                // 正常情况下由"按名单推算的最小窗口尺寸"保证放得下；
-                // 万一窗口被放到极窄（或屏幕本身很小），这里再缩放兜底，
-                // 保证用户永远看得到完整姓名，而不是"张…"。
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    name,
-                    maxLines: 1,
-                    softWrap: false,
-                    style: TextStyle(
-                      color: isSelected
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.bold,
-                      fontSize: fontSize,
+          child: Stack(
+            children: [
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  // 姓名**任何情况下都必须完整显示**：不省略号、不换行。
+                  // 正常情况下由"按名单推算的最小窗口尺寸"保证放得下；
+                  // 万一窗口被放到极窄（或屏幕本身很小），这里再缩放兜底，
+                  // 保证用户永远看得到完整姓名，而不是"张…"。
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      name,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: isSelected
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurface,
+                        fontWeight: FontWeight.bold,
+                        fontSize: fontSize,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            // 今日角标（V2.30.0）：左绿=今日表扬，右红=今日批评；
-            // 绝对定位、不占布局空间，因此**不会改变名字展示框的大小**。
-            if (todayPraise > 0)
-              Positioned(
-                top: 2,
-                left: 3,
-                child: _todayBadge('$todayPraise', theme.semantic.praise, theme),
-              ),
-            if (todayCriticism > 0)
-              Positioned(
-                top: 2,
-                right: 3,
-                child: _todayBadge('$todayCriticism', theme.semantic.criticize, theme),
-              ),
-          ],
+              // 今日角标（V2.30.0）：左绿=今日表扬，右红=今日批评；
+              // 绝对定位、不占布局空间，因此**不会改变名字展示框的大小**。
+              if (todayPraise > 0)
+                Positioned(
+                  top: 2,
+                  left: 3,
+                  child: _todayBadge(
+                    '$todayPraise',
+                    theme.semantic.praise,
+                    theme,
+                  ),
+                ),
+              if (todayCriticism > 0)
+                Positioned(
+                  top: 2,
+                  right: 3,
+                  child: _todayBadge(
+                    '$todayCriticism',
+                    theme.semantic.criticize,
+                    theme,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

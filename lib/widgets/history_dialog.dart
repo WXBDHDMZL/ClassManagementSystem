@@ -399,7 +399,6 @@ class _HistoryDialogState extends State<HistoryDialog> {
       if (!context.mounted) return;
       final records = provider.getRecordsForDate(date);
       if (records.isEmpty) continue;
-      exportedCount++;
       await RecordList.exportToExcel(
         context,
         records,
@@ -407,6 +406,9 @@ class _HistoryDialogState extends State<HistoryDialog> {
         attendanceDate: date,
         requirePassword: false,
       );
+      // 审计 P3：计数放在导出之后 —— 旧实现先 ++ 再 await，用户取消保存
+      // 或导出失败时也会被算作"已导出"，掩盖了没导出的事实。
+      exportedCount++;
     }
     if (exportedCount == 0) {
       if (!context.mounted) return;

@@ -625,6 +625,10 @@ LRESULT BallWindow::HandleMessage(HWND window, UINT message, WPARAM wparam,
       // 这里按新布局重新夹一次并把结果回写 Dart，位置才能真正持久化。
       if (is_visible_ && window_handle_ != nullptr) {
         ClampToVisibleArea();
+        // 审计 P3：ClampToVisibleArea 只在坐标变化时才重绘。DPI 缩放切换时
+        // 坐标通常不变，球会保持旧尺寸直到下次拖动。这里无条件按新 DPI
+        // 重绘一次（RenderAt 内部会按目标显示器重新取 DPI 与尺寸）。
+        RenderAt(window_x_, window_y_);
         if (on_moved) {
           on_moved(window_x_, window_y_);
         }

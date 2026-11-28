@@ -21,16 +21,23 @@ class RecordText {
   static const int maxReasonLength = 50;
   static const int maxRemarkLength = 200;
 
-  static String clipName(String name) =>
-      name.length > maxNameLength ? name.substring(0, maxNameLength) : name;
+  /// 按“字符”而非 UTF-16 code unit 截断（审计 P3）。
+  ///
+  /// 旧实现用 `String.length`/`substring`，遇到 emoji、生僻字等代理对时会把
+  /// 一个字符切成两半，落库后显示成"�"。这里按 runes 截断，保证不会切断
+  /// 任何完整字符。
+  static String _clip(String value, int maxLength) {
+    if (value.length <= maxLength) return value;
+    final runes = value.runes.toList(growable: false);
+    if (runes.length <= maxLength) return value;
+    return String.fromCharCodes(runes.take(maxLength));
+  }
 
-  static String clipReason(String reason) => reason.length > maxReasonLength
-      ? reason.substring(0, maxReasonLength)
-      : reason;
+  static String clipName(String name) => _clip(name, maxNameLength);
 
-  static String clipRemark(String remark) => remark.length > maxRemarkLength
-      ? remark.substring(0, maxRemarkLength)
-      : remark;
+  static String clipReason(String reason) => _clip(reason, maxReasonLength);
+
+  static String clipRemark(String remark) => _clip(remark, maxRemarkLength);
 
   /// 姓名净化：trim + 限长（写入侧与判重侧同口径）。
   static String normalizeName(String name) => clipName(name.trim());

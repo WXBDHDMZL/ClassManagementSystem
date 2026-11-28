@@ -437,6 +437,11 @@ mixin _ExportBackupDomain on _ProviderBase {
       _suspendSaveDepth++;
       String? error;
       var restored = false;
+      // 审计 P1-5：`restoreFrom` 一旦返回 null，磁盘上的主文件**已经**被备份
+      // 内容替换；此时若后续读取校验失败，内存里仍是恢复前的旧数据。原实现在
+      // finally 里无条件 `_save()` 把旧内存写回，等于用旧数据覆盖刚恢复的文件
+      // —— 备份白恢复了，还可能把唯一可用的备份内容也冲掉。
+      var fileReplaced = false;
       try {
         // 校验并覆盖主文件（校验失败不会覆盖）。
         error = await _storageService.restoreFrom(
@@ -447,6 +452,7 @@ mixin _ExportBackupDomain on _ProviderBase {
           _log('从备份恢复失败', '$sourcePath · $error');
           return error;
         }
+        fileReplaced = true;
         final result = await _storageService.loadData();
         // 恢复写入成功不代表立刻读得回来：磁盘/权限/杀软都可能在此时让
         // loadData 退回空库或再走一次 .bak。此时必须报错，绝不能把空库
@@ -482,7 +488,20 @@ mixin _ExportBackupDomain on _ProviderBase {
         // 审计 P1-5/原 P2-4：恢复失败时 _appData 仍是旧内存，窗口期内排队的
         // 写盘请求不能无条件丢弃，否则这些已改内存的数据永不落盘；恢复成功
         // 时旧请求才作废（旧内存已被替换）。
-        if (!restored && pending) _save();
+        //
+        // 审计 P1-5 补充：**磁盘主文件已被备份内容替换**（fileReplaced）时，
+        // 无论内存是否已同步，都绝不能把旧内存写回去 —— 那会直接覆盖刚恢复
+        // 的文件。此时改为保持写入阻断，让用户在阻断提示下用新会话重新加载
+        // （重启即可读到刚恢复的内容），而不是静默毁掉恢复结果。
+        if (fileReplaced && !restored) {
+          _storageWriteBlocked = true;
+          _startupNotice = '备份已写入，但恢复后的数据读取校验未通过；'
+              '为避免覆盖刚恢复的内容，本次已暂停写入，请重启程序后确认。';
+          _startupNoticeIsError = true;
+          _lastSaveFailed = true;
+        } else if (!restored && pending) {
+          _save();
+        }
       }
       _repairDuplicateIds();
       _lastSaveFailed = false;

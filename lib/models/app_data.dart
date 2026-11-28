@@ -219,7 +219,10 @@ class AppData {
   static List<String> _parseStudents(dynamic value) {
     if (value is List) {
       return value
-          .map((e) => e.toString().trim())
+          // 审计 P3：旧实现对所有值 `toString()`，对象/数组会被写成
+          // "[object]" 之类的假姓名。只接受字符串，其余跳过。
+          .whereType<String>()
+          .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
           .toSet()
           .toList();

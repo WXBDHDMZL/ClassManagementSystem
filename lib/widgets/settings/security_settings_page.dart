@@ -228,9 +228,14 @@ class SecuritySettingsPage extends StatelessWidget {
       builder: (_) => _RecoveryCodeDialog(code: code),
     );
     if (confirmed != true || !context.mounted) return;
-    await provider.setRecoveryCode(code);
+    final saved = await provider.setRecoveryCode(code);
     if (!context.mounted) return;
-    showTopSnackBar(context, '恢复码已保存，请妥善保管');
+    // 审计 P2-21：恢复码是安全凭据，写盘失败时必须明确告知，不能假成功。
+    showTopSnackBar(
+      context,
+      saved ? '恢复码已保存，请妥善保管' : '恢复码写入磁盘失败，本次未生效：请检查磁盘空间或文件权限后重试',
+      isError: !saved,
+    );
   }
 
   Future<void> _disableRecoveryCode(
@@ -249,8 +254,14 @@ class SecuritySettingsPage extends StatelessWidget {
       '关闭恢复码前，请再次输入当前管理密码。',
     );
     if (!verified || !context.mounted) return;
-    provider.clearRecoveryCode();
-    if (context.mounted) showTopSnackBar(context, '已关闭恢复码');
+    final cleared = await provider.clearRecoveryCode();
+    if (!context.mounted) return;
+    // 审计 P2-21：关闭恢复码同样要落盘确认，否则重启后恢复码"复活"。
+    showTopSnackBar(
+      context,
+      cleared ? '已关闭恢复码' : '关闭恢复码写入磁盘失败：重启后可能仍是启用状态',
+      isError: !cleared,
+    );
   }
 }
 

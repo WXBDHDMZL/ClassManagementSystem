@@ -27,7 +27,21 @@ class XlsxReader {
 
   /// 兼容 openpyxl / WPS 等写出的绝对路径关系（`/xl/worksheets/...`），
   /// `excel` 包按相对路径拼会找不到工作表。
-  static List<List<String>> readRows(List<int> bytes) {
+  static List<List<String>> readRows(
+    List<int> bytes, {
+    Set<String> headerKeywords = const {},
+  }) => readRowsWithSpans(bytes, headerKeywords: headerKeywords).rows;
+
+  /// 同 [readRows]，另外返回该表的合并区（形如 `A1:A2`），供
+  /// [XlsxMerge.fill] 把左上角的值铺满整个合并区（审计 P2-13）。
+  ///
+  /// 审计 P2-16：此前兜底路径无条件取**第一张非空表**，与 excel 包路径
+  /// （按 [headerKeywords] 在前 10 行挑选命中表）口径不一致 —— 工作簿里
+  /// 有封面/说明表时，excel 包解码失败（openpyxl/WPS 绝对路径）就会读错表，
+  /// 表现为"解析不到内容"。现在两条路径都先按关键词挑表，全不命中才退回
+  /// 第一张非空表。
+  static ({List<List<String>> rows, List<String> spans})
+  readRowsWithSpans(List<int> bytes, {Set<String> headerKeywords = const {}}) {
     // 审计 A-08：zip 炸弹/超大表在这里挡住，别等解压完才发现内存不够。
     ImportLimits.ensureZipPayload(bytes, what: '表格文件');
     final archive = ZipDecoder().decodeBytes(bytes, verify: false);
@@ -69,6 +83,7 @@ class XlsxReader {
     final sheets = workbook.descendants.whereType<XmlElement>().where(
       (element) => element.name.local == 'sheet',
     );
+    final parsedSheets = <({List<List<String>> rows, List<String> spans})>[];
     for (final sheet in sheets) {
       String relationId = '';
       for (final attribute in sheet.attributes) {
@@ -77,12 +92,28 @@ class XlsxReader {
       final target = _normalizeXlsxTarget(relationships[relationId] ?? '');
       final sheetEntry = archive.findFile(target);
       if (sheetEntry == null) continue;
-      final rows = _parseXlsxSheet(_entryText(sheetEntry), sharedStrings);
-      if (rows.any((row) => row.any((cell) => cell.trim().isNotEmpty))) {
-        return rows;
+      final parsed = _parseXlsxSheet(_entryText(sheetEntry), sharedStrings);
+      if (parsed.rows.any(
+        (row) => row.any((cell) => cell.trim().isNotEmpty),
+      )) {
+        parsedSheets.add(parsed);
       }
     }
-    return const [];
+    if (parsedSheets.isEmpty) return (rows: const [], spans: const []);
+    // 审计 P2-16：与 excel 包路径同口径 —— 先按表头关键词在前 10 行里挑表。
+    if (headerKeywords.isNotEmpty) {
+      for (final parsed in parsedSheets) {
+        final limit = parsed.rows.length < 10 ? parsed.rows.length : 10;
+        for (var i = 0; i < limit; i++) {
+          if (parsed.rows[i].any(
+            (cell) => headerKeywords.contains(cell.trim()),
+          )) {
+            return parsed;
+          }
+        }
+      }
+    }
+    return parsedSheets.first;
   }
 
   static String _entryText(ArchiveFile entry) {
@@ -100,7 +131,7 @@ class XlsxReader {
     return 'xl/$target';
   }
 
-  static List<List<String>> _parseXlsxSheet(
+  static ({List<List<String>> rows, List<String> spans}) _parseXlsxSheet(
     String xmlText,
     List<String> sharedStrings,
   ) {
@@ -140,7 +171,15 @@ class XlsxReader {
       }
       rows.add(cells);
     }
-    return rows;
+    // 审计 P2-13：合并区只有左上角有值，把区域信息一并带出去。
+    final spans = <String>[
+      for (final element in document.descendants.whereType<XmlElement>())
+        if (element.name.local == 'mergeCell')
+          for (final attribute in element.attributes)
+            if (attribute.name.local == 'ref' && attribute.value.contains(':'))
+              attribute.value,
+    ];
+    return (rows: rows, spans: spans);
   }
 
   static String _childText(XmlElement element, String localName) {

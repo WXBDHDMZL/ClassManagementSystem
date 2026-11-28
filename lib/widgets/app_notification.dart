@@ -75,7 +75,14 @@ class AppNoticeHandle {
   void _markDone() {
     if (_done) return;
     _done = true;
+    // 审计 P3：旧实现直接 clear()，`addListener` 注册的回调永远不会被调用
+    // （API 契约失效）。现在先回调再清空。当前生产代码没有注册监听，属
+    // 契约修正，避免以后有人用它做清理却被静默跳过。
+    final listeners = List<VoidCallback>.from(_listeners);
     _listeners.clear();
+    for (final listener in listeners) {
+      listener();
+    }
   }
 }
 
@@ -120,7 +127,9 @@ class AppNoticeController extends ChangeNotifier {
   }) {
     if (_disposed) return AppNoticeHandle._(null);
     // 带动作的通知不能被旧文案复用：否则新操作会拿到旧通知的按钮。
-    final duplicate = action == null ? _findDuplicate(message, kind, pinned: false) : null;
+    final duplicate = action == null
+        ? _findDuplicate(message, kind, pinned: false)
+        : null;
     if (duplicate != null) return duplicate.handle!;
     if (action != null) _removeActionNotices();
 

@@ -237,6 +237,11 @@ class LogFileService {
           );
           if (!name.startsWith('历史归档_')) continue;
           try {
+            // 审计 P3：归档内的文件继承/保留了 DE 拒绝项，先逐个解除再删目录。
+            await _unprotectPath(entity.path);
+            await for (final child in entity.list(recursive: true)) {
+              await _unprotectPath(child.path);
+            }
             await entity.delete(recursive: true);
             removed++;
           } on Object catch (e) {
@@ -293,6 +298,17 @@ class LogFileService {
     _protectedDirs.remove(file.parent.path);
     await _icacls(<String>[file.path, '/remove:d', user]);
     await _icacls(<String>[file.parent.path, '/remove:d', user]);
+  }
+
+  /// 解除任意路径上的“拒绝删除”项（审计 P3：历史归档内的日志文件也带 DE
+  /// 拒绝项，删归档目录时会被系统拒绝，旧实现只 debugPrint 后静默失败）。
+  static Future<void> _unprotectPath(String path) async {
+    if (disableProtectionForTests || !Platform.isWindows) return;
+    final user = Platform.environment['USERNAME'];
+    if (user == null || user.isEmpty) return;
+    _protectedFiles.remove(path);
+    _protectedDirs.remove(path);
+    await _icacls(<String>[path, '/remove:d', user]);
   }
 
   static Future<bool> _icacls(List<String> arguments) async {

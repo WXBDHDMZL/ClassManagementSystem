@@ -112,6 +112,9 @@ class DesktopService with TrayListener, WindowListener {
   /// 因此 main.cpp 里的 SetMinimumSize 实际不生效，必须由这里下发给插件。
   Size _minimumWindowSize = kMinWindowFloor;
 
+  /// 最小窗口尺寸下发的递增序号，用于丢弃乱序完成的旧结果（审计 P3）。
+  int _minimumWindowSeq = 0;
+
   /// 当前生效的最小窗口尺寸。
   Size get minimumWindowSize => _minimumWindowSize;
 
@@ -190,17 +193,25 @@ class DesktopService with TrayListener, WindowListener {
 
   /// 按名单重新推算最小窗口尺寸并下发（幂等：尺寸未变化时直接返回）。
   /// 当前窗口若小于新下限，会先把窗口放大到下限（最大化状态不动）。
+  ///
+  /// 审计 P3：`_clampSizeToWorkArea` 与 `_currentWindowAnchor` 都是异步的，
+  /// 快速增删学生时多次调用可能乱序完成，旧尺寸会覆盖新下限。用递增序号
+  /// 丢弃过期结果。
   Future<void> applyMinimumWindowSize(Size size) async {
-    size = await _clampSizeToWorkArea(
+    final seq = ++_minimumWindowSeq;
+    final clamped = await _clampSizeToWorkArea(
       size,
       anchor: await _currentWindowAnchor(),
     );
+    if (seq != _minimumWindowSeq) return;
+    size = clamped;
     if (size == _minimumWindowSize) return;
     _minimumWindowSize = size;
     if (!_initialized) return;
     try {
       await windowManager.setMinimumSize(size);
       final current = await windowManager.getSize();
+      if (seq != _minimumWindowSeq) return;
       if (current.width < size.width || current.height < size.height) {
         if (!await windowManager.isMaximized() &&
             !await windowManager.isFullScreen()) {
@@ -337,8 +348,7 @@ class DesktopService with TrayListener, WindowListener {
         //（如 "ClassManagementSystem    REG_BINARY    020000..."），没有 reg
         // export 的 "hex:" 前缀。此前按 hex: 前缀匹配永不命中，检测失效。
         final match = RegExp(r'REG_BINARY\s+([0-9a-fA-F]{2})').firstMatch(raw);
-        if (match != null &&
-            !startupApprovedAllowsStart(match.group(1)!)) {
+        if (match != null && !startupApprovedAllowsStart(match.group(1)!)) {
           return false; // 被任务管理器禁用
         }
       }
@@ -473,6 +483,19 @@ class DesktopService with TrayListener, WindowListener {
 
   /// 最小化到托盘：立即隐藏窗口，程序继续在后台运行并保持数据落盘。
   Future<void> hideToTray() async {
+    if (!_trayReady) {
+      // 审计 P2-25：托盘不可用（初始化失败/被资源管理器重启吞掉）时若仍
+      // 隐藏窗口，用户既看不到窗口也没有托盘图标，只能去任务管理器结束
+      // 进程。这里与 hideBallToTray 同口径：保持窗口可见并提示。
+      await showMainWindow();
+      appendErrorLog(
+        'desktop_service',
+        '托盘不可用，已取消最小化到托盘并保持窗口显示',
+        StackTrace.current,
+        context: 'hideToTray',
+      );
+      return;
+    }
     await windowManager.hide();
   }
 
@@ -855,17 +878,28 @@ class DesktopService with TrayListener, WindowListener {
 
   /// 退出/关机前把三类日志队列（运行日志、日志文件、错误日志）排空。
   /// 都带超时：日志写不进去也不能把退出流程卡死。
-  Future<void> _flushLogsBeforeExit() async {
+  Future<void> _flushLogsBeforeExit({
+    Duration timeout = const Duration(milliseconds: 800),
+  }) async {
     try {
       await Future.wait<void>([
         OperationLogService.flush(),
         LogFileService.flush(),
         flushErrorLogs(),
-      ]).timeout(const Duration(milliseconds: 800));
+      ]).timeout(timeout);
     } on Object catch (e) {
       debugPrint('退出前刷新日志超时/失败：$e');
     }
   }
+
+  /// 关机落盘预算（审计 P2-26）。
+  ///
+  /// 原生 `WM_QUERYENDSESSION` 只等 500ms（`windows/runner/flutter_window.cpp`），
+  /// 旧实现是「300ms 等数据落盘 + 800ms 刷日志」= 最坏 1.1s，超出原生等待
+  /// 窗口，日志那一段几乎注定被系统强杀，还会拖慢关机。现在两段合计压在
+  /// 450ms 内，给平台线程回执留出余量。
+  static const Duration _shutdownSaveBudget = Duration(milliseconds: 300);
+  static const Duration _shutdownLogBudget = Duration(milliseconds: 150);
 
   /// 原生侧在系统关机/注销时调进来：先把未落盘的数据与日志刷下去，再回执。
   ///
@@ -881,13 +915,13 @@ class DesktopService with TrayListener, WindowListener {
       );
       try {
         await _provider?.flushPendingSaves().timeout(
-          const Duration(milliseconds: 300),
+          _shutdownSaveBudget,
           onTimeout: () {},
         );
       } on Object catch (e) {
         debugPrint('关机落盘失败：$e');
       }
-      await _flushLogsBeforeExit();
+      await _flushLogsBeforeExit(timeout: _shutdownLogBudget);
       try {
         await _sessionChannel.invokeMethod<void>('shutdownPrepared');
       } on Object catch (e) {

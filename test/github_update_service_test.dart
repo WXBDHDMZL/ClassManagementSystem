@@ -10,13 +10,17 @@
  * 你可以依据该许可证使用、修改和再分发本软件；完整条款见根目录 LICENSE.txt。
  */
 
+import 'dart:async';
+import 'dart:io';
+
 import 'package:class_management_system/services/github_update_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _digest =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-String _releaseJson({String tag = 'v4.9.8'}) => '''
+String _releaseJson({String tag = 'v4.9.8'}) =>
+    '''
 {
   "tag_name": "$tag",
   "name": "V4.9.8",
@@ -112,8 +116,7 @@ void main() {
     });
 
     test('文件名不匹配时返回 null', () {
-      const text =
-          '$_digest  OtherSetup.exe\n';
+      const text = '$_digest  OtherSetup.exe\n';
       expect(
         GitHubUpdateService.parseChecksum(
           text,
@@ -129,4 +132,278 @@ void main() {
     expect(GitHubUpdateService.formatBytes(2048), '2 KB');
     expect(GitHubUpdateService.formatBytes(12 * 1024 * 1024), '12.0 MB');
   });
+
+  // 审计补强（P2-23 / P2-40）：下载分支此前完全没有单测。
+  // 用假的 HttpClient 覆盖「重定向次数、跨主机、HTTP 状态、中途取消、
+  // 长度不符、正常落盘」六条路径；真实网络行为另见人工冒烟清单。
+  group('downloadAsset 下载分支', () {
+    late Directory targetDir;
+
+    setUp(() async {
+      targetDir = await Directory.systemTemp.createTemp('cms_download_test_');
+    });
+
+    tearDown(() async {
+      if (await targetDir.exists()) {
+        await targetDir.delete(recursive: true);
+      }
+    });
+
+    const downloadUrl =
+        'https://github.com/WXBDHDMZL/ClassManagementSystem/releases/download/v5.0.1/a.exe';
+
+    GitHubAsset asset({int size = 6}) => GitHubAsset(
+      name: 'a.exe',
+      downloadUrl: Uri.parse(downloadUrl),
+      size: size,
+    );
+
+    test('重定向超过 5 次即取消，不无限跟随', () async {
+      final client = _FakeHttpClient(
+        (uri) => _FakeResponse(statusCode: 302, location: uri.path),
+      );
+
+      await expectLater(
+        GitHubUpdateService.downloadAsset(
+          asset(),
+          targetDir: targetDir,
+          client: client,
+        ),
+        throwsA(
+          isA<GitHubUpdateException>().having(
+            (e) => e.message,
+            'message',
+            contains('重定向次数过多'),
+          ),
+        ),
+      );
+      expect(client.requests, hasLength(6), reason: '首次请求 + 5 次跟随后放弃');
+      expect(targetDir.listSync(), isEmpty);
+    });
+
+    test('重定向到非 GitHub 主机直接拒绝', () async {
+      final client = _FakeHttpClient(
+        (uri) => _FakeResponse(
+          statusCode: 302,
+          location: 'https://evil.example.com/a.exe',
+        ),
+      );
+
+      await expectLater(
+        GitHubUpdateService.downloadAsset(
+          asset(),
+          targetDir: targetDir,
+          client: client,
+        ),
+        throwsA(
+          isA<GitHubUpdateException>().having(
+            (e) => e.message,
+            'message',
+            contains('不是 GitHub 官方地址'),
+          ),
+        ),
+      );
+      expect(client.requests, hasLength(1));
+    });
+
+    test('HTTP 非 200 报错且不留半成品', () async {
+      final client = _FakeHttpClient(
+        (uri) => _FakeResponse(statusCode: 404, contentLength: 0),
+      );
+
+      await expectLater(
+        GitHubUpdateService.downloadAsset(
+          asset(),
+          targetDir: targetDir,
+          client: client,
+        ),
+        throwsA(
+          isA<GitHubUpdateException>().having(
+            (e) => e.message,
+            'message',
+            contains('HTTP 404'),
+          ),
+        ),
+      );
+      expect(targetDir.listSync(), isEmpty);
+    });
+
+    test('下载中途取消：抛 UpdateCancelledException 并删除半成品', () async {
+      final client = _FakeHttpClient(
+        (uri) => _FakeResponse(
+          statusCode: 200,
+          contentLength: 6,
+          chunks: const <List<int>>[
+            [1, 2, 3],
+            [4, 5, 6],
+          ],
+        ),
+      );
+      var polls = 0;
+
+      await expectLater(
+        GitHubUpdateService.downloadAsset(
+          asset(),
+          targetDir: targetDir,
+          client: client,
+          shouldCancel: () => ++polls > 1,
+        ),
+        throwsA(isA<UpdateCancelledException>()),
+      );
+      expect(polls, 2);
+      expect(targetDir.listSync(), isEmpty);
+    });
+
+    test('收到字节数与声明长度不符时判为不完整', () async {
+      final client = _FakeHttpClient(
+        (uri) => _FakeResponse(
+          statusCode: 200,
+          contentLength: 10,
+          chunks: const <List<int>>[
+            [1, 2, 3, 4],
+          ],
+        ),
+      );
+
+      await expectLater(
+        GitHubUpdateService.downloadAsset(
+          asset(size: 10),
+          targetDir: targetDir,
+          client: client,
+        ),
+        throwsA(
+          isA<GitHubUpdateException>().having(
+            (e) => e.message,
+            'message',
+            contains('下载不完整'),
+          ),
+        ),
+      );
+      expect(targetDir.listSync(), isEmpty);
+    });
+
+    test('正常下载：落盘字节正确且进度回调收尾为全长', () async {
+      final client = _FakeHttpClient(
+        (uri) => _FakeResponse(
+          statusCode: 200,
+          contentLength: 6,
+          chunks: const <List<int>>[
+            [1, 2, 3],
+            [4, 5, 6],
+          ],
+        ),
+      );
+      final progress = <List<int>>[];
+
+      final file = await GitHubUpdateService.downloadAsset(
+        asset(),
+        targetDir: targetDir,
+        client: client,
+        onProgress: (received, total) => progress.add([received, total]),
+      );
+
+      expect(await file.readAsBytes(), [1, 2, 3, 4, 5, 6]);
+      expect(progress.last, [6, 6]);
+      expect(client.requests.single.toString(), downloadUrl);
+    });
+  });
+}
+
+class _FakeHeaders implements HttpHeaders {
+  final Map<String, String> values = <String, String>{};
+
+  @override
+  void set(String name, Object value, {bool preserveHeaderCase = false}) {
+    values[name.toLowerCase()] = '$value';
+  }
+
+  @override
+  String? value(String name) => values[name.toLowerCase()];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// 只实现被测代码真正用到的成员，其余走 [noSuchMethod]。
+class _FakeResponse extends Stream<List<int>> implements HttpClientResponse {
+  _FakeResponse({
+    required this.statusCode,
+    this.location,
+    this.chunks = const <List<int>>[],
+    this.contentLength = -1,
+  });
+
+  @override
+  final int statusCode;
+
+  @override
+  final int contentLength;
+
+  final String? location;
+  final List<List<int>> chunks;
+
+  @override
+  late final HttpHeaders headers = _buildHeaders();
+
+  HttpHeaders _buildHeaders() {
+    final headers = _FakeHeaders();
+    final value = location;
+    if (value != null) headers.values[HttpHeaders.locationHeader] = value;
+    return headers;
+  }
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    return Stream<List<int>>.fromIterable(chunks).listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeRequest implements HttpClientRequest {
+  _FakeRequest(this._response);
+
+  final HttpClientResponse _response;
+
+  @override
+  final HttpHeaders headers = _FakeHeaders();
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  Future<HttpClientResponse> close() async => _response;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeHttpClient implements HttpClient {
+  _FakeHttpClient(this.responder);
+
+  final HttpClientResponse Function(Uri uri) responder;
+  final List<Uri> requests = <Uri>[];
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    requests.add(url);
+    return _FakeRequest(responder(url));
+  }
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

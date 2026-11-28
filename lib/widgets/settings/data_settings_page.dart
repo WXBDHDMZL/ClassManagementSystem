@@ -57,8 +57,14 @@ class DataSettingsPage extends StatelessWidget {
               onPressed: () async {
                 final result = await FilePicker.platform.getDirectoryPath();
                 if (result == null || !context.mounted) return;
-                provider.setExportPath(result);
-                showTopSnackBar(context, '已设置导出路径，导出时会直接保存到该目录');
+                final saved = provider.setExportPath(result);
+                showTopSnackBar(
+                  context,
+                  saved
+                      ? '已设置导出路径，导出时会直接保存到该目录'
+                      : '导出路径未保存：当前无法写入数据文件，请先处理数据提示后重试',
+                  isError: !saved,
+                );
               },
             ),
             const SizedBox(width: 8),
@@ -66,8 +72,14 @@ class DataSettingsPage extends StatelessWidget {
               onPressed: settings.exportPath.isEmpty
                   ? null
                   : () {
-                      provider.setExportPath('');
-                      showTopSnackBar(context, '已清除导出路径，导出时会询问保存位置');
+                      final saved = provider.setExportPath('');
+                      showTopSnackBar(
+                        context,
+                        saved
+                            ? '已清除导出路径，导出时会询问保存位置'
+                            : '清除未保存：当前无法写入数据文件，请先处理数据提示后重试',
+                        isError: !saved,
+                      );
                     },
               child: Text(
                 '清除',
@@ -116,9 +128,9 @@ class DataSettingsPage extends StatelessWidget {
         SettingsHint(
           AttendanceFeature.enabled
               ? '数据包含记录、名单、原因库、时间段、考勤与考勤状态项，'
-                  '换电脑时可直接整包导入（不含管理密码）。'
+                    '换电脑时可直接整包导入（不含管理密码）。'
               : '数据包含记录、名单、原因库与时间段，'
-                  '换电脑时可直接整包导入（不含管理密码）。',
+                    '换电脑时可直接整包导入（不含管理密码）。',
         ),
         const SizedBox(height: 22),
         const SettingsSectionTitle('导出选项'),
@@ -132,12 +144,16 @@ class DataSettingsPage extends StatelessWidget {
             contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           ),
           onSubmitted: (value) {
-            provider.setExportOptions(filePrefix: value.trim());
-            showTopSnackBar(context, '已保存导出文件名前缀');
+            _saveExportPrefix(context, provider, value, announceSuccess: true);
+          },
+          // 审计 P3：失焦同样保存（旧实现只在回车时写入）。失焦成功不弹提示，
+          // 只有真的没写进去（阻断/无权限）才提示，避免切页时噪声。
+          onEditingComplete: (value) {
+            _saveExportPrefix(context, provider, value, announceSuccess: false);
           },
         ),
         const SizedBox(height: 6),
-        const SettingsHint('设置后，导出的记录、统计等文件名都会带上该前缀（回车保存）。'),
+        const SettingsHint('设置后，导出的记录、统计等文件名都会带上该前缀（回车或切换焦点即保存）。'),
         const SizedBox(height: 12),
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
@@ -189,7 +205,17 @@ class DataSettingsPage extends StatelessWidget {
                           }
                           next.remove(key);
                         }
-                        provider.setExportOptions(recordColumns: next);
+                        final saved = provider.setExportOptions(
+                          recordColumns: next,
+                        );
+                        if (!saved) {
+                          // 审计 B-35：空列/未知列被拒绝时要明确告知，不能静默。
+                          showTopSnackBar(
+                            context,
+                            '导出列未保存：至少需要保留一列，且当前需可写入数据文件',
+                            isError: true,
+                          );
+                        }
                       },
                     ),
                 ],
@@ -380,6 +406,7 @@ class _SettingTextField extends StatefulWidget {
     this.style,
     this.readOnly = false,
     this.onSubmitted,
+    this.onEditingComplete,
   });
 
   final String value;
@@ -387,6 +414,10 @@ class _SettingTextField extends StatefulWidget {
   final TextStyle? style;
   final bool readOnly;
   final ValueChanged<String>? onSubmitted;
+
+  /// 审计 P3：失焦时也要保存。此前导出文件名前缀只在回车（onSubmitted）
+  /// 时写入，用户输完直接点别处/切页就会静默丢弃输入。
+  final ValueChanged<String>? onEditingComplete;
 
   @override
   State<_SettingTextField> createState() => _SettingTextFieldState();
@@ -399,6 +430,21 @@ class _SettingTextFieldState extends State<_SettingTextField> {
   final FocusNode _focusNode = FocusNode();
 
   @override
+  void initState() {
+    super.initState();
+    // 审计 P3：失焦即保存。onSubmitted 只在回车时触发，用户输完直接点
+    // 别处/切页会静默丢输入；这里监听焦点变化补上失焦保存。
+    _focusNode.addListener(_handleFocusChange);
+  }
+
+  void _handleFocusChange() {
+    if (_focusNode.hasFocus) return;
+    final value = _controller.text;
+    if (value == widget.value) return;
+    widget.onEditingComplete?.call(value);
+  }
+
+  @override
   void didUpdateWidget(covariant _SettingTextField oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.value != oldWidget.value && !_focusNode.hasFocus) {
@@ -408,6 +454,7 @@ class _SettingTextFieldState extends State<_SettingTextField> {
 
   @override
   void dispose() {
+    _focusNode.removeListener(_handleFocusChange);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -424,4 +471,24 @@ class _SettingTextFieldState extends State<_SettingTextField> {
       onSubmitted: widget.onSubmitted,
     );
   }
+}
+
+/// 保存导出文件名前缀，并按真实落盘结果提示。
+///
+/// 审计 P3：旧实现只在回车时 `setExportOptions(...)` 且无条件提示"已保存"，
+/// 失焦/切页会丢输入、写盘失败也照样报成功。现在回车与失焦都走这里，
+/// 失焦成功不弹提示（避免切页噪声），失败一律提示。
+void _saveExportPrefix(
+  BuildContext context,
+  AppDataProvider provider,
+  String rawValue, {
+  required bool announceSuccess,
+}) {
+  final saved = provider.setExportOptions(filePrefix: rawValue.trim());
+  if (saved && !announceSuccess) return;
+  showTopSnackBar(
+    context,
+    saved ? '已保存导出文件名前缀' : '前缀未保存：当前无法写入数据文件，请先处理数据提示后重试',
+    isError: !saved,
+  );
 }

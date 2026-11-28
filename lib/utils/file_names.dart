@@ -26,7 +26,14 @@ const Set<String> _reservedNames = {
 
 /// 消毒文件名：去掉非法/控制字符、折叠 `..`、去掉首尾空白。
 /// 命中 Windows 保留设备名或消毒后为空时回退 [fallback]。
-String sanitizeFileName(String name, {String fallback = '导出文件'}) {
+///
+/// 审计 P3：还要限制长度。Windows 单个文件名上限 255 字符、整路径 260，
+/// 用户填了超长的导出前缀时写盘会直接失败。
+String sanitizeFileName(
+  String name, {
+  String fallback = '导出文件',
+  int maxLength = 120,
+}) {
   var value = name
       // 控制字符（0x00-0x1F）在 Windows 文件名里非法。
       .replaceAll(RegExp(r'[\x00-\x1f]'), '')
@@ -41,5 +48,18 @@ String sanitizeFileName(String name, {String fallback = '导出文件'}) {
   // 保留设备名（如 CON、CON.xlsx）同样非法：整名回退，避免用户意外。
   final stem = value.split('.').first.toUpperCase();
   if (_reservedNames.contains(stem)) return fallback;
+  // 截断时要保留扩展名，否则导出文件会变成没有后缀的"未知文件"。
+  if (value.length > maxLength) {
+    final dot = value.lastIndexOf('.');
+    final suffix = (dot > 0 && value.length - dot <= 12)
+        ? value.substring(dot)
+        : '';
+    final keep = maxLength - suffix.length;
+    if (keep > 0) {
+      value = '${value.substring(0, keep).trimRight()}$suffix';
+    } else {
+      value = value.substring(0, maxLength);
+    }
+  }
   return value;
 }

@@ -21,6 +21,7 @@ import '../utils/student_name.dart';
 import '../utils/utf16.dart';
 import 'import_limits.dart';
 import 'transfer_service.dart';
+import 'xlsx_merge.dart';
 import 'xlsx_reader.dart';
 
 /// 名单导入来源。
@@ -85,8 +86,12 @@ class StudentImportService {
     }
 
     final raw = <String>[];
-    for (final line in lines) {
-      final parts = line.split(RegExp(r'[,，、;；]'));
+    for (var i = 0; i < lines.length; i++) {
+      // 审计 P1-7（纯文本路径）：首行若是"高一(3)班学生名单"这类标题，
+      // 不能当成第一个学生姓名导入。只对首行做保守判定 —— 正文行里的
+      // "名单"等字样可能是真实内容，不在此过滤。
+      if (i == 0 && _isTitleLikeLine(lines[i])) continue;
+      final parts = lines[i].split(RegExp(r'[,，、;；]'));
       for (final part in parts) {
         raw.add(part);
       }
@@ -232,9 +237,15 @@ class StudentImportService {
     final raw = <String>[];
     // Word 常见结构：表格前先写几段姓名。若表头之前的行都是单格段落，
     // 这些段落也是名单内容，不能因为后面的表格表头而丢掉。
+    //
+    // 审计 P1-7：但表格前更常见的是一行标题（如"高一(3)班学生名单"）。
+    // 此前无条件把这些单格段落当成姓名收下，`_fromNames` 只按"空/超长"过滤，
+    // 标题就作为一条学生姓名被导入。这里用 [_isTitleLikeLine] 排除标题类文本。
     if (headerRow > 0 && rows.take(headerRow).every((row) => row.length == 1)) {
       for (var i = 0; i < headerRow; i++) {
-        raw.add(rows[i].first);
+        final text = rows[i].first;
+        if (_isTitleLikeLine(text)) continue;
+        raw.add(text);
       }
     }
     final start = headerRow >= 0 ? headerRow + 1 : 0;
@@ -338,6 +349,35 @@ class StudentImportService {
   static bool _isNameHeader(String value) =>
       _nameHeaders.contains(value.trim());
 
+  /// 标题类文本（"高一(3)班学生名单""某某中学 学生名册"等）。
+  ///
+  /// 审计 P1-7：表头之前单格段落里混入的标题不是姓名。判定刻意保守 ——
+  /// 只认"名单/名册/花名册/表格/学生表"等标题词，或含书名号/括号且明显不像
+  /// 姓名的整句，避免误伤真姓名（如"名单"两个字本身是罕见姓氏组合，但仍
+  /// 由 [validateStudentName] 与长度限制兜底）。
+  static bool _isTitleLikeLine(String value) {
+    final text = _cleanName(value);
+    if (text.isEmpty) return true;
+    // 含明确标题词的一律按标题处理（真姓名不会出现这些词）。
+    for (final keyword in _titleKeywords) {
+      if (text.contains(keyword)) return true;
+    }
+    // 段落里出现冒号/全角冒号通常是说明性文字，不是姓名。
+    if (text.contains(':') || text.contains('：')) return true;
+    return false;
+  }
+
+  static const List<String> _titleKeywords = [
+    '名单',
+    '名册',
+    '花名册',
+    '学生表',
+    '学生信息',
+    '人员表',
+    '通讯录',
+    '统计表',
+  ];
+
   static bool _isOrdinalCell(String value) {
     final text = value.trim();
     if (text.isEmpty) return false;
@@ -379,7 +419,9 @@ class StudentImportService {
     }
 
     final rows = <List<String>>[];
-    for (final node in body.children.whereType<XmlElement>()) {
+    // 审计 P2：Word 常把内容包在 `w:sdt`（内容控件）里，直接遍历 body 的
+    // 一级子元素会整段漏掉。这里递归展开 `sdt` → `sdtContent` 后再按段落/表格处理。
+    for (final node in _documentBlocks(body)) {
       if (node.name.local == 'p') {
         if (_isHeadingParagraph(node)) continue;
         final text = _paragraphText(node);
@@ -400,8 +442,32 @@ class StudentImportService {
     return rows;
   }
 
-  static List<List<String>> _parseXlsxRows(List<int> bytes) =>
-      XlsxReader.readRows(bytes);
+  /// 展开 body 的块级子元素（把 `w:sdt` 里的 `w:sdtContent` 内容提上来）。
+  static Iterable<XmlElement> _documentBlocks(XmlElement body) sync* {
+    for (final node in body.children.whereType<XmlElement>()) {
+      final name = node.name.local;
+      if (name == 'p' || name == 'tbl') {
+        yield node;
+        continue;
+      }
+      if (name == 'sdt') {
+        for (final content in node.children.whereType<XmlElement>()) {
+          if (content.name.local != 'sdtContent') continue;
+          yield* _documentBlocks(content);
+        }
+      }
+    }
+  }
+
+  static List<List<String>> _parseXlsxRows(List<int> bytes) {
+    // 审计 P2-13：合并单元格只有左上角有值，铺满后表头/姓名才不会丢。
+    // 审计 P2-16：兜底路径也要按「姓名」表头挑表，避免读到封面/说明表。
+    final parsed = XlsxReader.readRowsWithSpans(
+      bytes,
+      headerKeywords: _nameHeaders,
+    );
+    return XlsxMerge.fill(parsed.rows, parsed.spans);
+  }
 
   static bool _isHeadingParagraph(XmlElement paragraph) {
     for (final style in paragraph.descendants.whereType<XmlElement>().where(
@@ -423,11 +489,30 @@ class StudentImportService {
 
   static String _paragraphText(XmlElement element) {
     final buffer = StringBuffer();
-    for (final text in element.descendants.whereType<XmlElement>().where(
-      (node) => node.name.local == 't',
-    )) {
-      buffer.write(text.innerText);
-    }
+    _writeRunText(element, buffer);
     return buffer.toString().trim();
+  }
+
+  /// 按文档顺序收集段落里的可见文本。
+  ///
+  /// 审计 P2：此前只取 `w:t`，Word 里的制表符（`w:tab`）与换行（`w:br`）
+  /// 全部丢失 —— 一行 `张三<TAB>李四` 会被拼成 `张三李四`，名单直接错。
+  /// 同时跳过 `w:rPh`（注音/拼音）子树，避免把注音重复拼进姓名。
+  static void _writeRunText(XmlElement element, StringBuffer buffer) {
+    for (final node in element.children.whereType<XmlElement>()) {
+      switch (node.name.local) {
+        case 'rPh':
+          continue;
+        case 't':
+          buffer.write(node.innerText);
+        case 'tab':
+          buffer.write('\t');
+        case 'br':
+        case 'cr':
+          buffer.write('\n');
+        default:
+          _writeRunText(node, buffer);
+      }
+    }
   }
 }

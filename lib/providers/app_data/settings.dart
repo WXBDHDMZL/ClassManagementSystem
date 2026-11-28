@@ -23,10 +23,15 @@ mixin _SettingsDomain on _ProviderBase {
     _save();
   }
 
-  void setExportPath(String path) {
+  /// 保存默认导出目录，返回是否已进入落盘队列。
+  ///
+  /// 审计 P3：旧实现返回 void，设置页调用后无条件提示"已设置"，即使当时
+  /// 处于写盘阻断态（数据文件损坏/密钥不匹配）也照样报成功。改为返回
+  /// `_save()` 的结果，让调用方按真实结果提示。
+  bool setExportPath(String path) {
     _appData.settings = _appData.settings.copyWith(exportPath: path);
     _log('导出设置', '默认导出目录改为 $path');
-    _save();
+    return _save();
   }
 
   /// 设置关闭窗口时的行为（每次询问 / 直接退出 / 最小化到托盘 / 最小化到悬浮球）。
@@ -58,44 +63,91 @@ mixin _SettingsDomain on _ProviderBase {
       _log('密码设置', '拒绝未授权的管理密码哈希修改');
       return false;
     }
+    final previous = _appData.settings;
     _appData.settings = _appData.settings.copyWith(passwordHash: hash);
     _log('密码设置', hash.isEmpty ? '清除管理密码' : '设置/修改管理密码');
     final saved = await saveNow();
+    if (_shouldRollbackSecurityWrite(saved)) {
+      // 审计 P2-22：写盘失败必须回滚内存，否则界面显示"已改密码"、
+      // 磁盘仍是旧哈希，重启后密码"复活"，两侧状态不一致。
+      _appData.settings = previous;
+      _log('密码设置', '管理密码写入失败，已回滚本次修改');
+    }
     if (!saved) {
-      _log('密码设置', '管理密码写入失败，本次修改未落盘');
+      // saveNow() 在"加载未完成/写盘阻断/批次挂起"时不会入队，_save() 也就
+      // 没发出界面通知；这里补一次，保证界面按内存中的当前值刷新
+      // （已回滚时即回到修改前的值）。
+      notifyListeners();
     }
     return saved;
   }
 
+  /// 安全相关设置写入失败时是否回滚内存。
+  ///
+  /// 只有"Provider 已加载完成、确实尝试过写盘却失败"才回滚 —— 那时磁盘与内存
+  /// 会真正分叉（重启后密码/恢复码"复活"）。加载未完成时（`isLoading`，
+  /// 数据文件还没读出来）本就不会写盘，内存变更不存在与磁盘冲突的问题。
+  bool _shouldRollbackSecurityWrite(bool saved) => !saved && !isLoading;
+
   /// 设置/重新生成恢复码：只保存加盐哈希与创建日期，不保存明文。
-  Future<void> setRecoveryCode(String code) async {
+  ///
+  /// 审计 P2-21：返回是否已真正落盘。恢复码是安全相关写入，调用方必须
+  /// 等到结果再提示成功，否则写盘阻断/磁盘失败时用户仍看到"已保存"，
+  /// 重启后恢复码仍是旧值。与 [setPasswordHash] 的 A-19 修复同口径。
+  Future<bool> setRecoveryCode(String code) async {
     if (!_canManageSecuritySettings) {
       _log('密码设置', '拒绝未授权的恢复码修改');
-      return;
+      return false;
     }
     final normalized = SecurityService.normalizeRecoveryCode(code);
-    if (normalized.isEmpty) return;
+    if (normalized.isEmpty) return false;
     final hash = await SecurityService.hashPasswordAsync(normalized);
+    final previous = _appData.settings;
     _appData.settings = _appData.settings.copyWith(
       recoveryCodeHash: hash,
       recoveryCodeCreatedAt: _getTodayString(),
     );
     _log('密码设置', '已生成/更新恢复码');
-    _save();
+    final saved = await saveNow();
+    if (_shouldRollbackSecurityWrite(saved)) {
+      _appData.settings = previous;
+      _log('密码设置', '恢复码写入失败，已回滚本次修改');
+    }
+    if (!saved) {
+      // saveNow() 在"加载未完成/写盘阻断/批次挂起"时不会入队，_save() 也就
+      // 没发出界面通知；这里补一次，保证界面按内存中的当前值刷新
+      // （已回滚时即回到修改前的值）。
+      notifyListeners();
+    }
+    return saved;
   }
 
   /// 关闭恢复码（不影响力管理密码）。
-  void clearRecoveryCode() {
+  ///
+  /// 审计 P2-21：返回是否已真正落盘，理由同 [setRecoveryCode]。
+  Future<bool> clearRecoveryCode() async {
     if (!_canManageSecuritySettings) {
       _log('密码设置', '拒绝未授权的恢复码关闭');
-      return;
+      return false;
     }
+    final previous = _appData.settings;
     _appData.settings = _appData.settings.copyWith(
       recoveryCodeHash: '',
       recoveryCodeCreatedAt: '',
     );
     _log('密码设置', '已关闭恢复码');
-    _save();
+    final saved = await saveNow();
+    if (_shouldRollbackSecurityWrite(saved)) {
+      _appData.settings = previous;
+      _log('密码设置', '关闭恢复码写入失败，已回滚本次修改');
+    }
+    if (!saved) {
+      // saveNow() 在"加载未完成/写盘阻断/批次挂起"时不会入队，_save() 也就
+      // 没发出界面通知；这里补一次，保证界面按内存中的当前值刷新
+      // （已回滚时即回到修改前的值）。
+      notifyListeners();
+    }
+    return saved;
   }
 
   /// 用恢复码验证成功后：把管理密码重置为 [newPassword]，
@@ -141,20 +193,19 @@ mixin _SettingsDomain on _ProviderBase {
   }
 
   /// 保存完整的自定义时段列表（可增删）并立即生效；空列表表示恢复出厂时段。
-  void setPeriods(List<Map<String, String>> periods) {
+  /// 保存自定义时段（空列表表示恢复出厂时段），返回是否已进入落盘队列。
+  bool setPeriods(List<Map<String, String>> periods) {
     if (!_authorizedFor('periods', action: PasswordAction.periodModify)) {
-      return;
+      return false;
     }
     // G-9/G-19：深拷贝 + 与运行时同一口径过滤后再落库 —— 此前直接把外部 List
     // 存进 settings（调用方后续改写会污染内部状态），且存的是**未过滤**的原始
     // 列表（落盘与运行时口径不一致）。
     final clean = sanitizePeriods(periods);
-    _appData.settings = _appData.settings.copyWith(
-      periods: clean,
-    );
+    _appData.settings = _appData.settings.copyWith(periods: clean);
     applyCustomPeriods(clean);
     _log('时间段设置', clean.isEmpty ? '恢复出厂时段' : '自定义时段 ${clean.length} 段');
-    _save();
+    return _save();
   }
 
   /// 设置启动时的窗口状态（记住上次 / 默认大小 / 启动即最大化）。
@@ -246,11 +297,11 @@ mixin _SettingsDomain on _ProviderBase {
     if (!AppSettings.managementSessionMinuteOptions.contains(minutes)) return;
     final settings = _appData.settings;
     if (settings.managementSessionMinutes == minutes) return;
-    _appData.settings =
-        settings.copyWith(managementSessionMinutes: minutes);
+    _appData.settings = settings.copyWith(managementSessionMinutes: minutes);
     _log('操作身份', '班主任管理保持 $minutes 分钟');
+    // 审计 P3：_save() 内部已经 notifyListeners，这里重复通知会让设置页
+    // 一次改动重建两遍。
     _save();
-    notifyListeners();
   }
 
   void setSelfEditWindowMinutes(int minutes) {
@@ -262,12 +313,9 @@ mixin _SettingsDomain on _ProviderBase {
     final settings = _appData.settings;
     if (settings.selfEditWindowMinutes == minutes) return;
     _appData.settings = settings.copyWith(selfEditWindowMinutes: minutes);
-    _log(
-      '操作身份',
-      minutes == 0 ? '关闭本人编辑窗口' : '本人编辑窗口 $minutes 分钟',
-    );
+    _log('操作身份', minutes == 0 ? '关闭本人编辑窗口' : '本人编辑窗口 $minutes 分钟');
+    // 审计 P3：同 setManagementSessionMinutes，_save() 已负责通知。
     _save();
-    notifyListeners();
   }
 
   /// 新增自定义身份，返回新身份；名称为空时返回 null。
@@ -399,7 +447,7 @@ mixin _SettingsDomain on _ProviderBase {
     _log(
       '记录类型',
       '表扬${nextPraise ? '启用' : '停用'} · 批评${nextCriticism ? '启用' : '停用'}'
-      '${nextDefault != currentDefault ? ' · 默认类型自动切换' : ''}',
+          '${nextDefault != currentDefault ? ' · 默认类型自动切换' : ''}',
     );
     _save();
   }
@@ -565,10 +613,8 @@ mixin _SettingsDomain on _ProviderBase {
   }
 
   /// 导出选项：文件名前缀与记录导出列。
-  void setExportOptions({
-    String? filePrefix,
-    List<String>? recordColumns,
-  }) {
+  /// 保存导出选项（文件名前缀 / 导出列），返回是否已进入落盘队列。
+  bool setExportOptions({String? filePrefix, List<String>? recordColumns}) {
     // 只接受已知列键：未知 key 会在导出时变成空列/错列，且写入设置后
     // 每次启动才被清理，期间一直影响导出。
     final allowedColumns = {
@@ -581,14 +627,16 @@ mixin _SettingsDomain on _ProviderBase {
             for (final key in recordColumns)
               if (allowedColumns.contains(key)) key,
           }.toList(growable: false);
+    // 审计 B-35：空列表（或全部是未知列键被过滤后为空）不再"静默回退默认列"。
+    // 静默回退会让调用方以为设置成功、实际导出列被换成了默认值；这里直接拒绝
+    // 且不改动任何状态，调用方按返回值提示。
+    if (cleanedColumns != null && cleanedColumns.isEmpty) return false;
     _appData.settings = _appData.settings.copyWith(
       exportFilePrefix: filePrefix,
-      recordExportColumns: cleanedColumns == null || cleanedColumns.isEmpty
-          ? null
-          : cleanedColumns,
+      recordExportColumns: cleanedColumns,
     );
     _log('导出设置', '更新导出选项（前缀/记录列）');
-    _save();
+    return _save();
   }
 
   /// 原因的使用次数（扫一遍全部记录；供"按使用频率排序"使用）。
@@ -605,5 +653,4 @@ mixin _SettingsDomain on _ProviderBase {
     }
     return counts;
   }
-
 }

@@ -273,6 +273,11 @@ class AuthService {
   }
 
   /// 校验一次密码。内部处理锁定、失败计数与安全日志。
+  ///
+  /// 审计 P3：PBKDF2 是异步的（每次校验要等几毫秒到几十毫秒），若在 await
+  /// 之后才读-改-写失败计数，并发提交的多个错误密码会读到同一个旧值，
+  /// "第 N 次才锁定"的阈值形同虚设（并发 10 次错误可能只记 1 次）。
+  /// 这里改为先把本次尝试**同步登记**进计数，等校验结果回来再确认或撤销。
   static Future<AuthResult> verify(
     AppSettings settings,
     AuthCredential credential,
@@ -297,6 +302,10 @@ class AuthService {
       );
     }
 
+    // 同步登记本次尝试（await 之前），并发时每个请求都占住一个序号。
+    final failures = (_failures[credential] ?? 0) + 1;
+    _failures[credential] = failures;
+
     final ok = await SecurityService.verifyPasswordAsync(
       input,
       storedHash: storedHash(settings, credential),
@@ -310,8 +319,6 @@ class AuthService {
       return const AuthResult.success();
     }
 
-    final failures = (_failures[credential] ?? 0) + 1;
-    _failures[credential] = failures;
     if (failures < maxFailuresBeforeLock) {
       OperationLogService.log(
         '安全验证',

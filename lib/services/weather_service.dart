@@ -15,6 +15,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../constants/app_version.dart';
+
 /// 城市搜索结果。天气数据来自 Open-Meteo，只发送城市名/坐标，不涉及学生数据。
 class WeatherCity {
   const WeatherCity({
@@ -231,7 +233,7 @@ class WeatherService {
           await client.getUrl(uri).timeout(const Duration(seconds: 8));
       request.headers.set(
         HttpHeaders.userAgentHeader,
-        'ClassManagementSystem/2.33.1 (desktop)',
+        'ClassManagementSystem/${AppVersion.version} (desktop)',
       );
       final response =
           await request.close().timeout(const Duration(seconds: 10));

@@ -51,12 +51,15 @@ mixin _AttendanceDomain on _ProviderBase {
 
   /// 保存考勤状态项列表（界面已保证至少一项、非空且不重名，且不含保留词"出勤"）。
   /// 删除的状态项会同时从"同步到批评"的映射与"计入未到"名单里移除。
-  void setAttendanceStatuses(List<String> statuses) {
+  ///
+  /// 返回是否已进入落盘队列（审计 P3）：旧实现返回 void，设置页删完状态就
+  /// 无条件提示"已删除"，写盘阻断时提示与实际不符。
+  bool setAttendanceStatuses(List<String> statuses) {
     if (!_authorizedFor(
       'attendance',
       action: PasswordAction.attendanceSettings,
     )) {
-      return;
+      return false;
     }
     // 修复（审查四 G-6）：provider 层校验（此前只靠 UI）——去重、拒绝空与
     // 保留词"出勤"；非法值不入库，避免与"校验只在 UI"的旧隐患同类。
@@ -68,7 +71,7 @@ mixin _AttendanceDomain on _ProviderBase {
       if (AttendanceRecord.validateStatus(value) != null) continue;
       if (seen.add(value)) cleaned.add(value);
     }
-    if (cleaned.isEmpty) return; // 至少要保留一个状态项，否则不保存。
+    if (cleaned.isEmpty) return false; // 至少要保留一个状态项，否则不保存。
     statuses = cleaned;
     _log('考勤状态项', '保存 ${statuses.length} 个状态项');
     final syncMap = Map<String, String>.from(
@@ -91,7 +94,7 @@ mixin _AttendanceDomain on _ProviderBase {
       attendanceSyncMap: syncMap,
       attendanceAbsentStatuses: List<String>.unmodifiable(absent),
     );
-    _save();
+    return _save();
   }
 
   /// 重命名考勤状态项：同步更新历史考勤记录与该状态的同步映射。
@@ -210,8 +213,17 @@ mixin _AttendanceDomain on _ProviderBase {
   // ---------- 统计周期 ----------
 
   /// 每周起始日：1=周一 … 7=周日。
+  ///
+  /// 审计 P3：与其它设置写入同口径，需要授权与写盘阻断检查。
   void setWeekStart(int weekStart) {
     if (weekStart < 1 || weekStart > 7) return;
+    if (_blockedByStartup()) return;
+    if (!_authorizedFor(
+      'attendance',
+      action: PasswordAction.attendanceSettings,
+    )) {
+      return;
+    }
     _appData.settings = _appData.settings.copyWith(weekStart: weekStart);
     _log('统计设置', '每周起始日改为 $weekStart');
     _save();
@@ -265,6 +277,7 @@ mixin _AttendanceDomain on _ProviderBase {
       return 0;
     }
     var imported = 0;
+    var unchanged = 0;
     for (final record in records) {
       final date = record.date;
       final name = record.studentName.trim();
@@ -310,7 +323,11 @@ mixin _AttendanceDomain on _ProviderBase {
         if (record.recordedBy.isNotEmpty &&
             record.recordedBy != old.recordedBy) {
           list[index] = old.copyWith(recordedBy: record.recordedBy);
+          // 审计 P3：只有真正改动了记录人才算导入一条；旧实现把状态未变的
+          // 行也计入 imported，界面显示的数量比实际变更多。
           imported++;
+        } else {
+          unchanged++;
         }
         continue;
       }
@@ -336,12 +353,17 @@ mixin _AttendanceDomain on _ProviderBase {
       }
       // P2-9 修复：状态被导入覆盖时，旧的"记录同步"关联显式解绑——
       // 否则会出现"考勤=请假、关联批评=迟到"的自相矛盾且不会自愈。
+      //
+      // 审计 P2-2：解绑必须**同时**把 `syncedFromRecord` 置回 false。此前只清
+      // `syncedRecordId`，而孤儿清理判定是「syncedFromRecord 为真且关联 id 为空
+      // 或不存在」—— 于是这条导入来的考勤会被当成孤儿静默删除。
       list[index] = old.copyWith(
         status: record.status,
         timestamp: record.timestamp.isEmpty ? old.timestamp : record.timestamp,
         // 修复（5.3）：原来是 `isEmpty ? '' : ''`（两个分支相同），
         // 行为上等于无条件解绑，但写法极易被误读成"有条件解绑"。
         syncedRecordId: '',
+        syncedFromRecord: false,
         // 与记录导入一致：表格带记录人则采用，没带则保留原记录人。
         recordedBy: record.recordedBy.isEmpty
             ? old.recordedBy
@@ -357,6 +379,10 @@ mixin _AttendanceDomain on _ProviderBase {
       // 注意：导入是"搬数据"，这里**不**做"考勤 → 批评记录"的同步，
       // 否则每导入一次就会凭空多出一批"考勤同步"的批评记录。
       _save();
+    } else if (unchanged > 0) {
+      // 审计 P3：状态与记录人都没变时不算导入，但要让调用方知道文件确实
+      // 被读到了（旧实现直接返回 0，界面看起来像"一条都没读到"）。
+      _log('考勤导入', '$unchanged 条与现有考勤一致，无需写入');
     }
     return imported;
   }

@@ -215,6 +215,46 @@
 
 ---
 
+### B-33 全量代码审查（2026-11-28）问题修复
+- 状态：**已完成**
+- 来源：`AUDIT_REPORT_2026-11-28.md`（仓库根，本次审查产出，P1 七条 / P2 二十六条 / P3 二十余条）
+- P1（数据正确性，均已修并补回归）：
+  - P1-1 主文件缺失 + 唯一 `.bak` 解不开 → 旧实现按"首次启动"放行，第二次保存把空库写进 `.bak`。现 `DataLoadResult.backupUnreadable` + `_unreadableBackupProtected` 阻断写入，确认空库时先把 `.bak` 改名为 `.bak.corrupt_*`
+  - P1-2 删除自定义时段后编辑记录 → `periodName` 被改写成裸 key。现 `keepUnidentifiedPeriod` 同时接受"与原 key 相同"，保留 `periodName` 快照
+  - P1-3 原因改名跨时段污染 → `_renameReasonInRecordHistory` 增加 `periodKey` 精确匹配，同步映射只在原因从**所有分组**消失时改名/删除
+  - P1-4 导出「全天」后回导判重失效 → `matchTimePeriodKey` 补 `all_day` 分支
+  - P1-5 恢复写入成功但校验失败时 `finally` 用旧内存回写主文件 → 现置写阻断并提示重启，不再回写
+  - P1-6 CSV 字段中间裸引号吞掉后续行 → `_parseCsv` 重写为 RFC 4180 状态机，EOF 未闭合抛 `FormatException`
+  - P1-7 名单标题行被当姓名导入 → 表格路径与纯文本首行均过滤标题行
+- P2：批量导入原子化（`replaceDuplicateRecords` 只落盘一次）、导入覆盖清 `syncedFromRecord`、`deleteRecords` 补删派生考勤、`idRemap` 改 `putIfAbsent`、`getRecordsForDates` 全表按归属日过滤、`_findLinkedRecord`/`_removeRecordsByIds` 跨桶兜底、`_saveDataNow` 两阶段备份轮转（主写失败不毁 `.bak`）、`restoreFrom` 路径用 `resolveSymbolicLinks` 归一、密钥文件 `create(exclusive:)` 原子占位、原因库导入布局判定、合并单元格展开（新增 `lib/services/xlsx_merge.dart`）、库导入体积/行数上限、CSV 字节上限、`XlsxReader` 按表头关键词选表、时段库一列格式反查、数据包考勤「缺失 vs 空数组」语义、恢复码/密码落盘失败回滚、更新下载空闲超时与取消、`parseChecksum` 逐行匹配多资产、托盘不可用兜底、关机落盘预算 450ms（< 原生 500ms）
+- P2-11（`.keyid` 指纹缺失时按数据损坏处理）已在提交前收尾中修复：先试 `.bak` 用当前密钥恢复，不可解再按「密钥不可用 / 内容损坏」区分处理，详见 B-34；B-35（`setExportOptions([])` 静默回退默认列）改为返回 false 并拒绝，详见 B-35
+- P3：设置器统一返回 bool 并按真实结果提示、提交防重入、失焦保存、列表 key 去 index、通知监听器不再被清空、导出计数后置、长文案可滚动、学生卡片补 `Semantics`、日志尾读按字节拼接、`deleteAllLogs` 解除 ACL 保护项、`appendLine` 补行尾换行、悬浮球 DPI 变化重绘、窗口最小尺寸并发序号、`verify` 在 await 前同步登记尝试计数（并发也逐个计数）、PBKDF2 迭代上限、UTF-16 裁剪改按 runes、文件名长度截断、`forPeriod` 去重、`setWeekStart` 补权限与阻断检查、`importAttendance` 区分未变更条数
+- 回归：`test/audit_2026_11_28_fixes_test.dart`（31 例，含"空密钥占位自愈"2 例、P1-5 故障注入 1 例、B-34 降级 2 例、B-35 拒绝空列 1 例）+ `test/management_password_test.dart` 并发锁定 1 例 + `test/github_update_service_test.dart` 下载分支 6 例+ `test/update_launcher_test.dart` MSI 转义 3 例 + `tools/test_native_guards.py` 原生守卫 2 例；全量 929 用例通过、`flutter analyze` 无问题、`check_rules` 全绿、覆盖率 `--enforce` 通过（总 76.78%、核心 89.37%）、Windows Release 构建成功，详见 `docs/AI_HANDOFF.md` 与仓库根 `AUDIT_FIX_CLOSURE_2026-11-28.md`
+- 验收审计发现的衍生问题（均已修）：① `StorageKeyStore` 改 `create(exclusive:)` 后，进程死在"建 0 字节占位 → 写正式内容"之间会永久留空密钥文件；`initializeKey()` 现在"无数据文件 + 空占位"时删占位重建密钥并记错误日志，有数据文件时仍抛 `DataKeyUnavailableException`（绝不覆盖旧数据）。② 删除无调用的 `@visibleForTesting` 钩子 `debugShutdownSaveBudget` / `debugShutdownLogBudget`，改私有 const。
+
+---
+
+### B-34 `_keyIdMismatch` 指纹缺失时的可用性降级（已修复，2026-11-28 提交前收尾）
+- 状态：**已修复（方案 1：先试 `.bak` 自动恢复；不可解才隔离，并判定为「密钥不可用」而非「内容损坏」）**
+- 原问题：`lib/services/storage_service.dart` 的密钥指纹（`*.keyid`）缺失时 `_keyIdMismatch()` 返回 false，于是「主文件 + `.bak` 都解不开」一律按**内容损坏**处理（`resetToEmpty`）——换机/换 Windows 用户的用户会看到「数据损坏、可确认以空库继续」，而不是「密钥不对、请换回原 `.enc.key`」。
+- 现行实现（两层，均不违反「绝不用新密钥覆盖旧数据」）：
+  1. **先试恢复**：主文件解不开时，`.bak` 用**当前可用密钥**尝试解密（`_loadDataOrThrow` 的 `_tryLoadFile('$filePath.bak')` 分支）；可解则原子写回主文件、返回 `restoredFromBackup`，并记日志「主文件无法解密，已用备份恢复并写回主文件」。此路径只做「用能解开的那份备份覆盖已损坏的主文件」，不使用新密钥、不重建任何密钥文件。
+  2. **区分密钥问题与内容问题**：`.bak` 也不可用时，用 `StorageCrypto.looksEncrypted()` 看主文件**是不是格式合法的 LRX3 密文**。是 → 结论是「密钥不对或数据由别的机器写入」，隔离为 `*.corrupt_<毫秒>`（逐字节保留）后返回 `keyUnavailable: true`，界面按既有文案提示「数据密钥丢失或无法由当前 Windows 用户解密，已暂停保存…」；不是 → 保持原 `resetToEmpty` 判定（`test/storage_key_mismatch_test.dart` 固化的「无指纹旧数据按损坏隔离」语义不变）。
+  3. `loadData()` 的写阻断条件补上 `result.keyUnavailable`（此前不在其中，若只返回该 flag 会让后续保存用空库覆盖）。
+- **有指纹且不匹配**（`.keyid` 存在但值不同）**不降级**，仍是 `keyMismatch` 拦截、`.bak` 不顶替：那种情况下主文件是**另一把密钥的有效数据**（例如用户刚把别的机器的 `.enc` 拷回来），用本机 `.bak` 顶替等于静默丢掉用户刚还原的文件；`test/storage_key_mismatch_test.dart` ① 也固化了「不隔离、不重置、拒绝写入」。用户仍可通过显式的「以空库继续」确认操作脱困。
+- 回归证据：`test/audit_2026_11_28_fixes_test.dart` 的 `group('B-34 指纹缺失时的降级')` 2 例——正例（`.bak` 可解 → `restoredFromBackup` 为真、`students` 含备份内容、不产生 `.corrupt`、主文件内容与备份一致）、反例（`.bak` 也不可解 → `keyUnavailable` 为真、`resetToEmpty` 为假、恰好 1 个 `.corrupt` 且内容与原文件逐字节相同、主文件不存在、`saveData` 返回 false 且不重建主文件、`.enc.key` 未被重建）。反证：把 `if (sealedButUndecryptable)` 短路成 `false` 后该反例失败（`Expected: true / Actual: false`，退出码 1）。
+- 影响面：仅换机 / 换 Windows 用户 / 手动删过 `.keyid`、且 `.bak` 也解不开的场景。
+- 是否可后续补：可。若希望「密钥不可用」时也提供「确认后以空库继续」的出口，需补一条与 `discardKeyMismatchAndStartEmpty` 对称的确认流程与文案。
+
+### B-35 `setExportOptions([])` 静默回退默认列（已修复，2026-11-28 提交前收尾）
+- 状态：**已修复**（空列表 / 全部是未知列键 → 返回 false 且不改状态）
+- 原问题：`lib/providers/app_data/settings.dart` 的 `setExportOptions(recordColumns: <String>[])` 把空列表归一为 `null`（= 默认列集），调用方拿到 `true` 以为设置成功，实际导出列被换成默认值。
+- 现行实现：`if (cleanedColumns != null && cleanedColumns.isEmpty) return false;`，随后 `recordExportColumns: cleanedColumns`（不再归一为 null）；未知列键仍先被过滤（过滤器保留），但过滤后为空即拒绝。
+- 调用点同步：`lib/widgets/settings/data_settings_page.dart` 的列勾选回调改为 `final saved = provider.setExportOptions(recordColumns: next); if (!saved) showTopSnackBar(..., '导出列未保存：至少需要保留一列，且当前需可写入数据文件', isError: true)`；该页原有的「至少要保留一列」勾选拦截保留（双保险）。
+- 回归证据：`test/audit_2026_11_28_fixes_test.dart` 的 `group('B-35 setExportOptions 拒绝空列')`——空列表返回 false 且 `recordExportColumns` 保持原值、未知列同样被拒、`['name']` 返回 true 且生效。反证：把守卫去掉后该用例失败（`Expected: false / Actual: true`，退出码 1）。
+
+---
+
 ## 4. 暂缓（分发/共享设备/加密加固——当前阶段不排期，但不新增债务）
 
 | 编号 | 事项 | 说明 |

@@ -143,13 +143,17 @@ mixin _RosterDomain on _ProviderBase {
 
   /// 清空学生名单（不回溯修改历史记录中的姓名）。
   /// 出厂名单为空，不再内置任何真实或示例姓名。
-  void clearStudents() {
+  /// 清空名单，返回是否已进入落盘队列。
+  ///
+  /// 审计 P3：旧实现返回 void，界面调用后无条件提示"名单已清空"——
+  /// 未授权或写盘阻断时名单其实没动，提示与事实相反。
+  bool clearStudents() {
     if (!_authorizedFor('library', action: PasswordAction.rosterModify)) {
-      return;
+      return false;
     }
     _appData.setStudents(const <String>[]);
     _log('名单变更', '清空名单');
-    _save();
+    return _save();
   }
 
   /// 整体替换原因库。未授权返回 false（调用方不得再提示“已替换”）。
@@ -201,19 +205,54 @@ mixin _RosterDomain on _ProviderBase {
     )) {
       return false;
     }
-    _renameSyncMapReason(oldReason, value);
+    // 审计 P1-3：考勤同步映射是"状态 → 原因文本"的全局表（持久化格式冻结，
+    // 没有时段维度）。只有当该原因在**所有分组**里都已不存在时，映射才必须
+    // 跟着改名；否则仍留在其它分组的原因还要靠旧文本命中映射。
+    if (!_reasonExistsInAnyGroup(operationType, oldReason)) {
+      _renameSyncMapReason(oldReason, value);
+    }
     // G-7：历史记录里的原因文本一并更新 —— 否则旧记录在再编辑时按原因反查映射
     // 不命中，`_resyncRecordEdit` 会撤销掉原本关联的考勤（隐性数据关联断裂）。
     // 与 renameStudent 的"改名同步历史"保持一致。
-    _renameReasonInRecordHistory(operationType, oldReason, value);
-    _log('原因库', '原因改名 $oldReason → $value（历史记录同步更新）');
+    // 审计 P1-3 根因修复：必须按 [periodKey] 精确匹配 —— 此前只按操作类型过滤，
+    // 而「睡觉/趴桌」等文本同时存在于 5 个时段组，改一处会污染其余四组的历史。
+    _renameReasonInRecordHistory(operationType, periodKey, oldReason, value);
+    _log(
+      '原因库',
+      '原因改名 $oldReason → $value'
+          '（$periodKey 分组历史记录同步更新）',
+    );
     _save();
     return true;
   }
 
-  /// 把历史记录里的旧原因文本替换为新原因（同类型记录）。
+  /// 该原因是否仍存在于指定操作类型的任意分组（含全时段通用分组）。
+  bool _reasonExistsInAnyGroup(String operationType, String reason) {
+    final map = operationType == '表扬'
+        ? _appData.reasons.praise
+        : _appData.reasons.criticism;
+    for (final group in map.values) {
+      if (group.contains(reason)) return true;
+    }
+    return false;
+  }
+
+  /// 记录是否属于被改名的原因分组。
+  ///
+  /// `_common` 是全时段通用分组，改名必须影响该类型下的全部记录；具体分组
+  /// 只影响同组记录；记录时段键为空（无法识别的导入数据）时无法判断归属，
+  /// 保守跳过，避免把别的组的历史改坏。
+  static bool _recordBelongsToGroup(StudentRecord record, String periodKey) {
+    if (periodKey == '_common') return true;
+    if (record.periodKey == periodKey) return true;
+    // 记录侧把"未选时段"规整成 all_day，原因分组侧没有对应项时不强行匹配。
+    return false;
+  }
+
+  /// 把历史记录里的旧原因文本替换为新原因（同类型 + 同时段分组）。
   void _renameReasonInRecordHistory(
     String operationType,
+    String periodKey,
     String oldReason,
     String newReason,
   ) {
@@ -221,6 +260,7 @@ mixin _RosterDomain on _ProviderBase {
       for (var i = 0; i < records.length; i++) {
         final record = records[i];
         if (record.operationType != operationType) continue;
+        if (!_recordBelongsToGroup(record, periodKey)) continue;
         final parts = record.reasons.split('、');
         if (!parts.contains(oldReason)) continue;
         records[i] = record.copyWith(
@@ -268,7 +308,11 @@ mixin _RosterDomain on _ProviderBase {
       reason,
     );
     if (removed) {
-      _removeSyncMapReason(reason);
+      // 审计 P1-3：该原因若仍存在于其它分组，全局同步映射不能删——否则别的
+      // 分组里同名的原因会突然失去"记录 → 考勤"的联动。
+      if (!_reasonExistsInAnyGroup(operationType, reason)) {
+        _removeSyncMapReason(reason);
+      }
       _log('原因库', '删除原因 $reason');
       _save();
     }

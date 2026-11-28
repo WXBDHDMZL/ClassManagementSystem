@@ -51,8 +51,12 @@ class _AttendanceSettingsPageState extends State<AttendanceSettingsPage> {
       return;
     }
     _addController.clear();
-    provider.setAttendanceStatuses([...statuses, value]);
-    showTopSnackBar(context, '已新增考勤状态「$value」');
+    final saved = provider.setAttendanceStatuses([...statuses, value]);
+    showTopSnackBar(
+      context,
+      saved ? '已新增考勤状态「$value」' : '考勤状态未保存：当前无法写入数据文件，请先处理数据提示后重试',
+      isError: !saved,
+    );
   }
 
   Future<void> _rename(AppDataProvider provider, String status) async {
@@ -137,10 +141,14 @@ class _AttendanceSettingsPageState extends State<AttendanceSettingsPage> {
                 '确定删除吗？',
     );
     if (confirmed != true || !mounted) return;
-    provider.setAttendanceStatuses(
+    final saved = provider.setAttendanceStatuses(
       statuses.where((item) => item != status).toList(),
     );
-    showTopSnackBar(context, '已删除考勤状态「$status」');
+    showTopSnackBar(
+      context,
+      saved ? '已删除考勤状态「$status」' : '删除未保存：当前无法写入数据文件，请先处理数据提示后重试',
+      isError: !saved,
+    );
   }
 
   Future<void> _resetToDefaults(AppDataProvider provider) async {
@@ -153,8 +161,14 @@ class _AttendanceSettingsPageState extends State<AttendanceSettingsPage> {
           '历史考勤记录本身不会删除，但使用被清除状态的记录会显示为"已停用"。确定吗？',
     );
     if (confirmed != true || !mounted) return;
-    provider.setAttendanceStatuses(AppSettings.defaultAttendanceStatuses);
-    showTopSnackBar(context, '已恢复出厂考勤状态');
+    final saved = provider.setAttendanceStatuses(
+      AppSettings.defaultAttendanceStatuses,
+    );
+    showTopSnackBar(
+      context,
+      saved ? '已恢复出厂考勤状态' : '恢复出厂未保存：当前无法写入数据文件，请先处理数据提示后重试',
+      isError: !saved,
+    );
   }
 
   @override

@@ -60,6 +60,9 @@ class _StudentImportDialogState extends State<StudentImportDialog> {
   }
 
   Future<void> _pickFile() async {
+    // 审计 P3：读文件是异步的，旧实现没有防重入——连点会并发解析、
+    // 后完成的预览覆盖先完成的。
+    if (_readingFile) return;
     final picked = await FilePicker.platform.pickFiles(
       dialogTitle: '选择名单文件',
       type: FileType.custom,
@@ -99,8 +102,13 @@ class _StudentImportDialogState extends State<StudentImportDialog> {
       showTopSnackBar(context, '没有可补充的姓名（可能全部已在名单中）', isError: true);
       return;
     }
+    // 审计 P3：pop 之后当前 context 已失效，提示必须用外层 context。
+    // 这里先取 Navigator/根 context，再 pop 与提示，避免"use_build_context"。
+    final messenger = ScaffoldMessenger.maybeOf(context);
     Navigator.pop(context);
-    showTopSnackBar(context, '已补充 $added 人');
+    messenger?.showSnackBar(
+      SnackBar(content: Text('已补充 $added 人')),
+    );
   }
 
   Future<void> _replace(AppDataProvider provider, List<String> names) async {
@@ -118,8 +126,12 @@ class _StudentImportDialogState extends State<StudentImportDialog> {
       showTopSnackBar(context, '替换失败：没有可用的姓名', isError: true);
       return;
     }
+    // 审计 P3：同上，pop 后再提示要用外部 messenger，不能用已卸载的 context。
+    final messenger = ScaffoldMessenger.maybeOf(context);
     Navigator.pop(context);
-    showTopSnackBar(context, '已替换为 ${names.length} 人');
+    messenger?.showSnackBar(
+      SnackBar(content: Text('已替换为 ${names.length} 人')),
+    );
   }
 
   @override

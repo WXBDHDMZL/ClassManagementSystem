@@ -100,6 +100,11 @@ class GitHubUpdateException implements Exception {
   String toString() => message;
 }
 
+/// 用户在下载过程中主动取消（审计 P2-23：进度框原先不可取消）。
+class UpdateCancelledException extends GitHubUpdateException {
+  const UpdateCancelledException() : super('已取消更新');
+}
+
 /// 通过 GitHub Releases API 检查、下载并校验更新包。
 ///
 /// 只访问 GitHub 官方域名；下载后必须通过 SHA-256 校验才会交给安装器。
@@ -109,6 +114,9 @@ class GitHubUpdateService {
   static const String owner = AppVersion.githubOwner;
   static const String repo = AppVersion.githubRepo;
   static const Duration requestTimeout = Duration(seconds: 20);
+
+  /// 下载响应体的空闲超时：超过这么久没有收到任何数据就判定失败。
+  static const Duration idleTimeout = Duration(seconds: 30);
   static const Set<String> _allowedHosts = {
     'api.github.com',
     'github.com',
@@ -254,10 +262,15 @@ class GitHubUpdateService {
   }
 
   /// 下载安装包到 [targetDir]，返回本地文件。
+  ///
+  /// 审计 P2-23：响应体逐块读取原先没有任何超时，网络半死不活时下载会
+  /// 永久挂起（进度框又不可取消）。现在加了 30 秒空闲超时，并支持通过
+  /// [shouldCancel] 中途取消。
   static Future<File> downloadAsset(
     GitHubAsset asset, {
     required Directory targetDir,
     void Function(int received, int total)? onProgress,
+    bool Function()? shouldCancel,
     HttpClient? client,
   }) async {
     final http = client ?? HttpClient();
@@ -281,7 +294,19 @@ class GitHubUpdateService {
           ? response.contentLength
           : asset.size;
       try {
-        await for (final chunk in response) {
+        final stream = response.timeout(
+          idleTimeout,
+          onTimeout: (chunkSink) {
+            chunkSink.addError(
+              const GitHubUpdateException('下载长时间无数据，请检查网络后重试'),
+            );
+            chunkSink.close();
+          },
+        );
+        await for (final chunk in stream) {
+          if (shouldCancel?.call() ?? false) {
+            throw const UpdateCancelledException();
+          }
           sink.add(chunk);
           received += chunk.length;
           onProgress?.call(received, total);
@@ -333,19 +358,32 @@ class GitHubUpdateService {
   }
 
   /// 从 `sha256sum` 文本中取出 64 位十六进制摘要。
+  ///
+  /// 审计 P2-24：原实现只取全文第一个摘要再校验文件名，多资产 checksum
+  /// 文件里目标资产不是第一行时会返回 null，界面误报「未提供校验值」。
+  /// 现在逐行按文件名匹配，只有完全没有文件名信息（纯摘要文件）时才
+  /// 退回到唯一摘要。
   static String? parseChecksum(String text, String assetName) {
-    final match = RegExp(r'\b([0-9a-fA-F]{64})\b').firstMatch(text);
-    if (match == null) return null;
-    final normalized = match.group(1)!.toLowerCase();
-    final fileName = text
-        .split(RegExp(r'\r?\n'))
-        .where((line) => line.toLowerCase().contains(normalized))
-        .map((line) => line.replaceFirst(normalized, '').trim())
-        .where((rest) => rest.isNotEmpty)
-        .toList();
-    if (fileName.isEmpty) return normalized;
-    final listedName = fileName.first.replaceFirst(RegExp(r'^\*'), '').trim();
-    if (listedName.isEmpty || listedName.endsWith(assetName)) return normalized;
+    final lines = text.split(RegExp(r'\r?\n'));
+    final digestPattern = RegExp(r'([0-9a-fA-F]{64})');
+    final digests = <String>[];
+    var sawNamedLine = false;
+    for (final line in lines) {
+      final match = digestPattern.firstMatch(line);
+      if (match == null) continue;
+      final digest = match.group(1)!.toLowerCase();
+      if (!digests.contains(digest)) digests.add(digest);
+      final rest = line.replaceFirst(match.group(1)!, '').trim();
+      if (rest.isEmpty) continue;
+      final listedName = rest.replaceFirst(RegExp(r'^\*'), '').trim();
+      if (listedName.isEmpty) continue;
+      sawNamedLine = true;
+      final baseName = listedName.split(RegExp(r'[/\\]')).last.trim();
+      if (baseName == assetName) return digest;
+    }
+    // 纯摘要文件（没有文件名）只有一个摘要时直接采用；有文件名但都不匹配
+    // 说明这份 checksum 不是给当前资产的，必须返回 null 让调用方报错。
+    if (!sawNamedLine && digests.length == 1) return digests.single;
     return null;
   }
 

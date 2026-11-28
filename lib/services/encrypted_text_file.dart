@@ -66,10 +66,25 @@ class EncryptedTextFile {
   }
 
   /// 追加一条记录。
+  ///
+  /// 审计 P3：追加本身不是原子的，进程崩溃可能留下半行。旧实现直接接着写，
+  /// 新行会被拼到半行后面，导致**两条一起解不开**。这里先检查文件是否以
+  /// 换行结尾，不是就补一个换行，把损坏限制在原来那一行。
   static Future<void> appendLine(File file, String plainLine) async {
     await file.parent.create(recursive: true);
+    var prefix = '';
+    if (await file.exists() && await file.length() > 0) {
+      final raf = await file.open();
+      try {
+        await raf.setPosition(await raf.length() - 1);
+        final last = await raf.read(1);
+        if (last.isEmpty || last.first != 0x0A) prefix = '\n';
+      } finally {
+        await raf.close();
+      }
+    }
     await file.writeAsString(
-      '${_encode(plainLine)}\n',
+      '$prefix${_encode(plainLine)}\n',
       mode: FileMode.append,
       flush: true,
     );

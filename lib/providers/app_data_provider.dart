@@ -606,6 +606,15 @@ abstract class _ProviderBase extends ChangeNotifier {
       } else if (result.restoredFromBackup) {
         _startupNotice = '数据文件损坏，已自动从备份恢复';
         _startupNoticeIsError = false;
+      } else if (result.backupUnreadable) {
+        // 审计 P1-1：主文件缺失、唯一 `.bak` 解不开。绝不能按"首次启动"放行，
+        // 否则第二次保存会把空库写进这份可能还能人工抢救的备份。
+        _storageWriteBlocked = true;
+        _needsEmptyLibraryConfirm = true;
+        _startupNotice =
+            '数据文件不存在，且仅剩的备份无法解密（可能来自其他电脑或旧密钥）。'
+            '在确认前程序不会写入，也不会覆盖这份备份。';
+        _startupNoticeIsError = true;
       } else if (result.resetToEmpty) {
         // 审计 A-01：原文件已隔离，但**不能**直接以空库开跑——必须先让用户
         // 知道"还有一份被隔离的原文件"，并显式确认后才解除写入阻断。
@@ -712,7 +721,10 @@ abstract class _ProviderBase extends ChangeNotifier {
           changed = true;
         }
         if (id != record.id) {
-          idRemap[record.id] = id;
+          // 审计 P2-4：同一原始 id 出现 3 条以上时，此前 `idRemap[record.id] = id`
+          // 会被后写覆盖，所有指向原 id 的考勤被挂到**最后一条**重复记录上，
+          // 删除首条时不再撤销考勤。改为只保留第一条映射。
+          idRemap.putIfAbsent(record.id, () => id);
           // N-2：id 修复也走唯一入口，保证全程序只有一份记录构造实现。
           records[i] = _buildRecord(
             id: id,
@@ -1157,16 +1169,17 @@ abstract class _ProviderBase extends ChangeNotifier {
   List<StudentRecord> getRecordsForDates(List<String> dates) {
     final dateSet = dates.toSet();
     final allRecords = <StudentRecord>[];
-    for (final date in dates) {
-      for (final record in _appData.recordsByDate[date] ?? const []) {
+    // 审计 P2-5：按桶键遍历会漏掉「record.date 在区间内、但挂在别的桶里」
+    // 的历史脏数据（统计/导出少算），重复 dates 还会重复收集。改为遍历全表、
+    // 以记录自身归属日过滤，天然去重。
+    for (final entry in _appData.recordsByDate.entries) {
+      for (final record in entry.value) {
         // 审计 P2-20：记录自身的日期才是归属日。桶键与 record.date 不一致
         // （历史导入/手工改期遗留）时，不能把区间外的记录混进统计。
         final recordDate = record.date;
-        if (recordDate != null &&
-            recordDate.isNotEmpty &&
-            !dateSet.contains(recordDate)) {
-          continue;
-        }
+        final effectiveDate =
+            (recordDate == null || recordDate.isEmpty) ? entry.key : recordDate;
+        if (!dateSet.contains(effectiveDate)) continue;
         allRecords.add(record);
       }
     }
@@ -1284,6 +1297,9 @@ abstract class _ProviderBase extends ChangeNotifier {
 
   /// 删除记录，成功返回 true；未找到时返回 false 供 UI 提示。
   bool deleteRecord(String recordId, {String? date}) {
+    // 审计 P2-1：与其它写操作同口径，启动阻断态（写盘被禁）必须先拦下 ——
+    // 否则内存已删、`_save()` 返回 false，本方法仍返回 true，重启后记录复活。
+    if (_blockedByStartup()) return false;
     final hits = <({String date, StudentRecord record, int index})>[];
     if (date != null) {
       final list = _appData.recordsByDate[date];
@@ -1346,9 +1362,12 @@ abstract class _ProviderBase extends ChangeNotifier {
             '${hit.record.reasons} · ${hit.record.timestamp}',
       );
     }
-    _lastRecordUndo = _RecordUndo.delete(hits);
-    _save();
-    return true;
+    // 审计 P2-1：撤销快照只记**真正被删掉**的那些 —— 此前用全部 `hits`，
+    // 撤销时会把无权删除（未通过身份/时间窗校验）的记录也重新插回去。
+    _lastRecordUndo = _RecordUndo.delete(allowedHits);
+    // 审计 P2-1：落盘失败必须如实返回 false，让界面提示"删除未保存"，
+    // 而不是先报成功、重启后记录复活。
+    return _save();
   }
 
   /// 记录 → 考勤：新增的批评记录带了同步原因时登记考勤，并建立关联，
@@ -2000,8 +2019,28 @@ abstract class _ProviderBase extends ChangeNotifier {
     String studentName,
     AttendanceRecord? attendance,
   ) {
-    final records = _appData.recordsByDate[date];
-    if (records == null || attendance == null) return null;
+    if (attendance == null) return null;
+    // 审计 P2-6：record.date 与桶键可能不一致（历史脏数据/导入异常），
+    // 只查单日桶会找不到关联记录，进而重复生成一条"考勤同步"批评记录。
+    // 先查归属日桶（快路径），未命中再全表兜底。
+    final primary = _appData.recordsByDate[date];
+    final linked = _findLinkedIn(primary, studentName, attendance);
+    if (linked != null) return linked;
+    for (final entry in _appData.recordsByDate.entries) {
+      if (entry.key == date) continue;
+      final found = _findLinkedIn(entry.value, studentName, attendance);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  /// 在给定记录列表里按「关联 id → 同步标记 + 学生 + 时段」查找同步记录。
+  StudentRecord? _findLinkedIn(
+    List<StudentRecord>? records,
+    String studentName,
+    AttendanceRecord attendance,
+  ) {
+    if (records == null || records.isEmpty) return null;
     final linkId = attendance.syncedRecordId;
     if (linkId.isNotEmpty) {
       for (final record in records) {
@@ -2039,10 +2078,13 @@ abstract class _ProviderBase extends ChangeNotifier {
       _appData.recordsByDate.putIfAbsent(date, () => <StudentRecord>[]);
 
   void _removeRecordsByIds(String date, Set<String> ids, {Set<String>? altDates}) {
+    var removed = 0;
     void removeIn(String bucket) {
       final records = _appData.recordsByDate[bucket];
       if (records == null) return;
+      final before = records.length;
       records.removeWhere((record) => ids.contains(record.id));
+      removed += before - records.length;
       if (records.isEmpty) _appData.recordsByDate.remove(bucket);
     }
 
@@ -2050,6 +2092,14 @@ abstract class _ProviderBase extends ChangeNotifier {
     if (altDates != null) {
       for (final alt in altDates) {
         if (alt != date) removeIn(alt);
+      }
+    }
+    // 审计 P2-6：指定的桶都没命中时，全表兜底 —— 否则 record.date 与桶键
+    // 不一致的同步记录永远删不掉，会一直残留在历史里。
+    if (removed == 0) {
+      for (final bucket in _appData.recordsByDate.keys.toList()) {
+        if (bucket == date || (altDates?.contains(bucket) ?? false)) continue;
+        removeIn(bucket);
       }
     }
   }

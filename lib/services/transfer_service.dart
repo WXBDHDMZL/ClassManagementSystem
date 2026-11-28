@@ -25,6 +25,7 @@ import '../models/student_record.dart';
 import 'import_limits.dart';
 import 'import_service.dart';
 import 'excel_export.dart';
+import 'xlsx_merge.dart';
 import 'xlsx_reader.dart';
 
 /// 考勤状态导入行：状态名称、是否计为未到、同步的批评原因。
@@ -120,15 +121,23 @@ class TransferService {
       if (workbook.tables.isEmpty) return const [];
       sheets = <List<List<String>>>[
         for (final name in workbook.tables.keys)
-          [
-            for (final row in workbook.tables[name]!.rows)
-              [for (final cell in row) ImportService.cellTextOf(cell?.value)],
-          ],
+          // 审计 P2-13：合并区只有左上角有值，纵向合并的姓名/日期会让后续行
+          // 变成空值。先把合并区铺满，再交给各导入器解析。
+          XlsxMerge.fill(
+            [
+              for (final row in workbook.tables[name]!.rows)
+                [for (final cell in row) ImportService.cellTextOf(cell?.value)],
+            ],
+            workbook.tables[name]!.spannedItems,
+          ),
       ];
     } on Object {
-      final rows = XlsxReader.readRows(bytes);
-      if (rows.isEmpty) rethrow;
-      sheets = [rows];
+      final parsed = XlsxReader.readRowsWithSpans(
+        bytes,
+        headerKeywords: headerKeywords,
+      );
+      if (parsed.rows.isEmpty) rethrow;
+      sheets = [XlsxMerge.fill(parsed.rows, parsed.spans)];
     }
     if (headerKeywords.isNotEmpty) {
       for (final rows in sheets) {
@@ -164,7 +173,11 @@ class TransferService {
   /// 解码 CSV：必须是 UTF-8（可带 BOM）。
   /// Excel 默认另存的 GBK/ANSI CSV 会解出乱码，这里直接报错让用户另存为 UTF-8，
   /// 避免乱码被写进名单/记录/原因。
+  ///
+  /// 审计 P2-15：此前 CSV 分支没有任何体积上限（xlsx 分支有），
+  /// `withData: true` 会把整份文件读进内存后才解码。这里与 xlsx 同口径挡住。
   static String decodeCsv(List<int> bytes) {
+    ImportLimits.ensureFileBytes(bytes.length, what: 'CSV 文件');
     try {
       var text = utf8.decode(bytes);
       // 用转义写法而非字面量不可见字符，避免编辑器/复制粘贴时被抹掉。
@@ -392,11 +405,25 @@ class TransferService {
     final result = <ReasonImportRow>[];
     var skipped = 0;
     var start = 0;
+    // 审计 P2-12：`excel` 包会把每行补齐到全表最大列数，所以 `row.length`
+    // 恒等于表宽 —— 只要表里有一行是三列，所有两列行都会被当成"三列但时段
+    // 为空"而整行跳过，整库导入 0 条。这里优先按表头判定布局，没有表头时
+    // 逐行判定（第三列有值 = 三列；第三列为空但第二列是时段名 = 三列缺原因）。
+    var layout = 0; // 0 = 未知，2 = 两列，3 = 三列
     if (rows.isNotEmpty && rows.first.isNotEmpty) {
       final first = rows.first.map((cell) => cell.trim()).toList();
       if (first.contains('类型') || first.contains('原因')) {
         start = 1;
+        layout = first.contains('时段') ? 3 : 2;
       }
+    }
+    // 无表头时：整张表没有任何一行填过第三列 → 全是两列布局，直接定死。
+    // 这一步必须做，否则两列文件里恰好叫「上课」的原因会被误判成时段名。
+    if (layout == 0) {
+      final anyThirdColumn = rows.any(
+        (row) => row.length > 2 && row[2].trim().isNotEmpty,
+      );
+      if (!anyThirdColumn) layout = 2;
     }
     for (var i = start; i < rows.length; i++) {
       final row = rows[i];
@@ -407,7 +434,19 @@ class TransferService {
       // 修复（审计 P2-42）：布局改按**列数**判定（此前用"第 3 列是否为空"猜测，
       // `批评|上课|`（三列但原因为空）会被误判成两列、把时段名当原因导入）；
       // 三列行的原因为空时按无法识别跳过并计数。
-      final isTwoColumn = row.length < 3;
+      final bool isTwoColumn;
+      if (layout == 2) {
+        isTwoColumn = true;
+      } else if (layout == 3) {
+        isTwoColumn = false;
+      } else if (cell(2).isNotEmpty) {
+        isTwoColumn = false;
+      } else {
+        // 第三列为空：被补齐的两列行，还是"三列但原因为空"？看第二列能否
+        // 识别成时段名 —— 能识别就说明它本来是时段列。
+        final second = cell(1);
+        isTwoColumn = second.isEmpty || matchTimePeriodKey(second).isEmpty;
+      }
       final periodText = isTwoColumn ? '' : cell(1);
       final reason = isTwoColumn ? cell(1) : cell(2);
       if (type != '表扬' && type != '批评') {
@@ -966,11 +1005,15 @@ class TransferService {
         }
       }
 
+      // 审计 P2-19：`attendance` 缺失 = 该数据包"未提供考勤"（旧包/手工裁剪），
+      // 还原时保留本机考勤；显式空数组才表示"包内确实没有考勤"，即清空。
+      // 此前这里强制要求是 List，导致 `restoreFromPackage` 里的 null 分支
+      // 成为死代码，缺失键的包被整包拒绝。
       final attendanceJson = json['attendance'];
-      if (attendanceJson is! List) return null;
+      if (attendanceJson != null && attendanceJson is! List) return null;
       final attendance = <AttendanceRecord>[];
       var discardedAttendance = 0;
-      for (final item in attendanceJson) {
+      for (final item in (attendanceJson as List?) ?? const <Object?>[]) {
         if (item is! Map<String, dynamic>) {
           discardedAttendance++;
           continue;
@@ -995,7 +1038,7 @@ class TransferService {
         weekStart: weekStart,
         attendanceEnabled: attendanceEnabled,
         attendanceSyncMap: syncMap,
-        attendance: attendance,
+        attendance: attendanceJson == null ? null : attendance,
         attendanceStatuses: attendanceStatuses,
         attendanceAbsentStatuses: absentStatuses,
         exportedAt: exportedAt,

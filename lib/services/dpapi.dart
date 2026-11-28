@@ -57,6 +57,8 @@ class Dpapi {
         LocalFree(output.pbData.cast());
       }
     } finally {
+      // 审计 P3：释放前清零明文缓冲区，避免密钥残留在堆上。
+      input.asTypedList(plain.length).fillRange(0, plain.length, 0);
       calloc.free(inputBlob);
       calloc.free(input);
       calloc.free(outputBlob);
@@ -94,6 +96,8 @@ class Dpapi {
         LocalFree(output.pbData.cast());
       }
     } finally {
+      // 审计 P3：释放前清零密文/明文缓冲区。
+      input.asTypedList(cipher.length).fillRange(0, cipher.length, 0);
       calloc.free(inputBlob);
       calloc.free(input);
       calloc.free(outputBlob);
