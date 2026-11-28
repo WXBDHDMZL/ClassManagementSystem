@@ -243,17 +243,20 @@ class DesktopService with TrayListener, WindowListener {
     // 触发的通知才会补发，本次会话第一次显球仍是默认外观。
     await applyBallStyle();
 
-    // 先建托盘：托盘失败时下面的关闭拦截不会被启用，程序保持"关闭即退出"。
+    // 接管窗口关闭：由 Flutter 层按设置决定退出还是最小化。
+    // 审计 A-09：这一步必须先于托盘初始化。此前它排在托盘之后，托盘任一
+    // 环节抛异常就会让关闭拦截永不启用 —— 点 ✗ 走原生销毁，跳过落盘与
+    // 退出备份。先立起拦截后，托盘失败最多是"没有托盘图标/菜单"。
+    await windowManager.setPreventClose(true);
+    windowManager.addListener(this);
+
+    // 托盘：失败只影响托盘图标与菜单，不再影响关闭拦截。
     await trayManager.setIcon(_trayIconAsset);
     await trayManager.setToolTip('班级管理系统（单击托盘图标可恢复窗口）');
     trayManager.addListener(this);
     _trayReady = true;
     await _updateTrayMenu();
     await applyBallMenuState();
-
-    // 接管窗口关闭：由 Flutter 层按设置决定退出还是最小化。
-    await windowManager.setPreventClose(true);
-    windowManager.addListener(this);
     // 审计 S-P1-12：_initialized 必须最后置位，避免托盘/通道失败时
     // 留下"半初始化"状态（旧实现提前置 true，失败后仍被当作已初始化）。
     _initialized = true;
@@ -689,7 +692,17 @@ class DesktopService with TrayListener, WindowListener {
     void armWatchdog(Duration timeout) {
       _quitWatchdog?.cancel();
       _quitWatchdog = Timer(timeout, () {
-        exit(0);
+        // 审计 A-12：超时说明"退出时备份/落盘排队/关窗"有一环被卡住。硬结束
+        // 进程前必须留下可追溯的记录，并走统一的退出出口（测试可注入），
+        // 不再无声 exit(0)。
+        debugPrint('退出超时（${timeout.inSeconds}s），强制结束进程');
+        appendErrorLog(
+          'desktop_service',
+          '退出超时，强制结束进程',
+          StackTrace.current,
+          context: '超时时长：${timeout.inSeconds}s',
+        );
+        _invokeExit(0);
       });
     }
 
@@ -697,7 +710,7 @@ class DesktopService with TrayListener, WindowListener {
     // 否则磁盘/杀软导致 flushPendingSaves 永久阻塞时兜底永远不会触发。
     // 审计 P2-3：10 秒对"退出时备份"可能太短（备份未完成就被硬杀），
     // 因此准备阶段给 30 秒；保存队列完成后重置为 10 秒专盯关窗阶段。
-    armWatchdog(const Duration(seconds: 30));
+    armWatchdog(debugWatchdogPrepare);
     try {
       // 先记录窗口状态（内部排队保存，随后由 flush 落盘）。
       await rememberWindowBounds();
@@ -718,7 +731,7 @@ class DesktopService with TrayListener, WindowListener {
       }
       await _provider?.flushPendingSaves();
       // 准备阶段（备份/落盘）完成，聚焦关窗阶段，防止窗口卡死拖到备份超时误杀。
-      armWatchdog(const Duration(seconds: 10));
+      armWatchdog(debugWatchdogClose);
       // 托盘清理失败不能影响退出流程。
       try {
         await trayManager.destroy();
@@ -789,6 +802,13 @@ class DesktopService with TrayListener, WindowListener {
   /// 会直接把测试进程杀掉。
   @visibleForTesting
   static void Function(int code)? debugExitOverride;
+
+  /// 退出看门狗的时长（审计 A-12 的测试缝）。默认准备阶段 30 秒、关窗阶段 10 秒：
+  /// 10 秒对"退出时备份"太短（备份未完成就被硬杀），30 秒给准备阶段留余量。
+  @visibleForTesting
+  static Duration debugWatchdogPrepare = const Duration(seconds: 30);
+  @visibleForTesting
+  static Duration debugWatchdogClose = const Duration(seconds: 10);
 
   /// 结束进程（可被测试替换，且在 `flutter test` 里绝不真退）。
   static void _invokeExit(int code) {
@@ -1192,53 +1212,54 @@ class DesktopService with TrayListener, WindowListener {
   /// 弹出询问框并按用户选择执行；勾选"记住"时同步保存设置。
   Future<void> _askAndApply(AppDataReader provider) async {
     if (_closeDialogShowing) return;
-    final context = _navigatorKey?.currentContext;
-    if (context == null) {
-      // 拿不到界面上下文时不再询问，直接退出，避免窗口关不掉。
-      await quitApp();
-      return;
-    }
-
-    // 关闭请求可能来自任务栏缩略图上的 ✗：此时主窗口往往处于最小化或被遮挡状态，
-    // 确认框会弹在一个看不见的窗口里（看起来就像"点了关闭没反应"）。
-    // 先把主窗口恢复、显示并拿到焦点，再弹确认框。悬浮球模式下主窗口本就隐藏，跳过。
-    final wasMinimized = !_ballActive && await windowManager.isMinimized();
-    if (!_ballActive) {
-      await windowManager.restore();
-      await windowManager.show();
-      await windowManager.focus();
-    }
-    if (!context.mounted) {
-      // 窗口在等待期间被销毁（极少发生）：按直接退出处理，避免窗口关不掉。
-      await quitApp();
-      return;
-    }
-
+    // 审计 A-16：守卫必须在任何 await 之前置位。旧实现先做了"恢复/显示/聚焦"
+    // 这几次 await，再到弹框前置 true —— 用户快速连点两次 ✗（或任务栏缩略图
+    // 关闭按钮）就会叠出两个确认框。用 finally 保证异常路径也能复位。
     _closeDialogShowing = true;
-    final CloseConfirmResult? result;
     try {
-      result = await CloseConfirmDialog.show(context);
+      final context = _navigatorKey?.currentContext;
+      if (context == null) {
+        // 拿不到界面上下文时不再询问，直接退出，避免窗口关不掉。
+        await quitApp();
+        return;
+      }
+
+      // 关闭请求可能来自任务栏缩略图上的 ✗：此时主窗口往往处于最小化或被遮挡状态，
+      // 确认框会弹在一个看不见的窗口里（看起来就像"点了关闭没反应"）。
+      // 先把主窗口恢复、显示并拿到焦点，再弹确认框。悬浮球模式下主窗口本就隐藏，跳过。
+      final wasMinimized = !_ballActive && await windowManager.isMinimized();
+      if (!_ballActive) {
+        await windowManager.restore();
+        await windowManager.show();
+        await windowManager.focus();
+      }
+      if (!context.mounted) {
+        // 窗口在等待期间被销毁（极少发生）：按直接退出处理，避免窗口关不掉。
+        await quitApp();
+        return;
+      }
+
+      final CloseConfirmResult? result = await CloseConfirmDialog.show(context);
+      if (result == null) {
+        // 取消关闭时恢复原最小化状态，避免只是点了一下 ✗ 就把窗口弹出来。
+        if (wasMinimized) await windowManager.minimize();
+        return;
+      }
+      if (result.remember) {
+        provider.setCloseAction(result.action);
+      }
+      switch (result.action) {
+        case CloseActionType.exit:
+          await quitApp();
+        case CloseActionType.minimizeToTray:
+          await hideToTray();
+        case CloseActionType.minimizeToBall:
+          await enterBallMode();
+        case CloseActionType.ask:
+          break;
+      }
     } finally {
       _closeDialogShowing = false;
-    }
-
-    if (result == null) {
-      // 取消关闭时恢复原最小化状态，避免只是点了一下 ✗ 就把窗口弹出来。
-      if (wasMinimized) await windowManager.minimize();
-      return;
-    }
-    if (result.remember) {
-      provider.setCloseAction(result.action);
-    }
-    switch (result.action) {
-      case CloseActionType.exit:
-        await quitApp();
-      case CloseActionType.minimizeToTray:
-        await hideToTray();
-      case CloseActionType.minimizeToBall:
-        await enterBallMode();
-      case CloseActionType.ask:
-        break;
     }
   }
 

@@ -153,13 +153,23 @@ void main() {
     expect(_menuLabels(tray).length, 4);
   });
 
-  test('初始化：托盘不可用时向上抛出（调用方据此降级为"关闭即退出"）', () async {
+  test('初始化：托盘不可用时向上抛出，但关闭拦截仍已建立', () async {
     trayWorks = false;
 
     await expectLater(initService(), throwsA(isA<PlatformException>()));
 
     expect(service.trayReady, isFalse);
-    expect(window.has('setPreventClose'), isFalse, reason: '托盘失败后不应接管关闭');
+    // 旧期望：expect(window.has('setPreventClose'), isFalse,
+    //   reason: '托盘失败后不应接管关闭');
+    // 新期望：托盘失败时关闭拦截必须已经建立。原因（审计 A-09）：旧实现把
+    // setPreventClose 排在托盘初始化之后，托盘任一环节失败就退回"点 ✗ 走原生
+    // 销毁"，跳过 flushPendingSaves 与退出备份；现在先立拦截，托盘失败只影响
+    // 托盘图标与菜单。
+    expect(
+      (window.last('setPreventClose')!.arguments as Map)['isPreventClose'],
+      true,
+      reason: '托盘失败也应保留关闭拦截，避免关闭时丢失未落盘数据',
+    );
   });
 
   // ---------------- 悬浮球 ----------------
