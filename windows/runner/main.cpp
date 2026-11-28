@@ -1,6 +1,7 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <gdiplus.h>
+#include <sddl.h>
 #include <windows.h>
 
 #include <algorithm>

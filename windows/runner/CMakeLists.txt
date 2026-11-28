@@ -42,6 +42,8 @@ target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 # 悬浮球图标渲染（GDI+ 圆形位图 + UpdateLayeredWindow）与深浅色主题（uxtheme）。
 target_link_libraries(${BINARY_NAME} PRIVATE "gdiplus.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "uxtheme.lib")
+# 审计 A-10：按用户 SID 构造单实例互斥体名需要 ConvertSidToStringSidW。
+target_link_libraries(${BINARY_NAME} PRIVATE "advapi32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
