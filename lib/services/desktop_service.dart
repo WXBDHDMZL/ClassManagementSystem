@@ -23,9 +23,11 @@ import '../models/app_settings.dart';
 import '../utils/app_date.dart';
 import '../utils/grid_layout.dart';
 import '../widgets/close_confirm_dialog.dart';
+import '../utils/app_clock.dart';
 import 'app_data_reader.dart';
 import 'error_log_service.dart';
-import '../utils/app_clock.dart';
+import 'log_file_service.dart';
+import 'operation_log_service.dart';
 
 /// 悬浮球右键菜单动作（由原生菜单经 MethodChannel 回传）。
 enum BallMenuAction {
@@ -57,6 +59,12 @@ class DesktopService with TrayListener, WindowListener {
   /// 原生悬浮球控制通道。
   static const MethodChannel _ballChannel = MethodChannel(
     'class_management_system/ball',
+  );
+
+  /// 会话结束（关机/注销）通知通道：原生侧在 WM_QUERYENDSESSION 里先调
+  /// `prepareForShutdown`，Dart 落盘完成后回 `shutdownPrepared`（审计 A-11）。
+  static const MethodChannel _sessionChannel = MethodChannel(
+    'class_management_system/session',
   );
 
   AppDataReader? _provider;
@@ -242,6 +250,8 @@ class DesktopService with TrayListener, WindowListener {
     // 修复（审计 P2-49）：启动时也把悬浮球外观下发一次 —— 此前只有"数据变化"
     // 触发的通知才会补发，本次会话第一次显球仍是默认外观。
     await applyBallStyle();
+
+    _sessionChannel.setMethodCallHandler(_handleSessionCall);
 
     // 接管窗口关闭：由 Flutter 层按设置决定退出还是最小化。
     // 审计 A-09：这一步必须先于托盘初始化。此前它排在托盘之后，托盘任一
@@ -730,6 +740,9 @@ class DesktopService with TrayListener, WindowListener {
         }
       }
       await _provider?.flushPendingSaves();
+      // 审计 A-24：数据落盘之后还要把日志队列排空 —— 此前退出只 flush 数据，
+      // 最后几条运行日志/错误日志会随进程结束丢掉，事后再也查不到"关窗前发生了什么"。
+      await _flushLogsBeforeExit();
       // 准备阶段（备份/落盘）完成，聚焦关窗阶段，防止窗口卡死拖到备份超时误杀。
       armWatchdog(debugWatchdogClose);
       // 托盘清理失败不能影响退出流程。
@@ -796,6 +809,51 @@ class DesktopService with TrayListener, WindowListener {
     }
   }
 
+  /// 退出/关机前把三类日志队列（运行日志、日志文件、错误日志）排空。
+  /// 都带超时：日志写不进去也不能把退出流程卡死。
+  Future<void> _flushLogsBeforeExit() async {
+    try {
+      await Future.wait<void>([
+        OperationLogService.flush(),
+        LogFileService.flush(),
+        flushErrorLogs(),
+      ]).timeout(const Duration(milliseconds: 800));
+    } on Object catch (e) {
+      debugPrint('退出前刷新日志超时/失败：$e');
+    }
+  }
+
+  /// 原生侧在系统关机/注销时调进来：先把未落盘的数据与日志刷下去，再回执。
+  ///
+  /// 边界（写进最终报告）：C++ 只等约 500ms，且 Windows 仍可能直接终止进程；
+  /// 这里能保证的是"断电/关机时主文件始终是原子写后的完整文件"，不保证零丢失。
+  Future<void> _handleSessionCall(MethodCall call) async {
+    if (call.method == 'prepareForShutdown') {
+      appendErrorLog(
+        'desktop_service',
+        '系统即将关机/注销：开始落盘',
+        null,
+        context: 'WM_QUERYENDSESSION',
+      );
+      try {
+        await _provider?.flushPendingSaves().timeout(
+          const Duration(milliseconds: 300),
+          onTimeout: () {},
+        );
+      } on Object catch (e) {
+        debugPrint('关机落盘失败：$e');
+      }
+      await _flushLogsBeforeExit();
+      try {
+        await _sessionChannel.invokeMethod<void>('shutdownPrepared');
+      } on Object catch (e) {
+        debugPrint('回执关机落盘结果失败：$e');
+      }
+      return;
+    }
+    debugPrint('未处理的会话通道调用：${call.method}');
+  }
+
   /// 测试注入点：`quitWithoutSaving` 的兜底结束进程动作。
   ///
   /// 生产环境为 null（走真实的 `exit(0)`）；测试里必须注入，否则 `exit`
@@ -844,11 +902,7 @@ class DesktopService with TrayListener, WindowListener {
       context: reason == null || reason.isEmpty ? '数据阻断' : reason,
     );
     // 日志队列本身是异步的：给 800ms 让它落盘，超时也照样退出。
-    try {
-      await flushErrorLogs().timeout(const Duration(milliseconds: 800));
-    } on Object catch (e) {
-      debugPrint('退出前写日志超时/失败：$e');
-    }
+    await _flushLogsBeforeExit();
 
     _quitWatchdog?.cancel();
     // 兜底：close 成功但进程未退（引擎/托盘线程）时也必须结束，否则用户

@@ -49,6 +49,12 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       ball_channel_;
 
+  // 会话结束通道（审计 A-11）：关机/注销时先让 Dart 落盘，再回执。
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      session_channel_;
+  // Dart 落盘完成（或超时）后 SetEvent，WM_QUERYENDSESSION 的短等待据此提前结束。
+  HANDLE shutdown_event_ = nullptr;
+
   // 桌面悬浮球：独立的原生分层小窗口。
   BallWindow ball_window_;
 };

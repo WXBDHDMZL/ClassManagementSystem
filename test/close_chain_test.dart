@@ -22,6 +22,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,11 +30,19 @@ import 'package:class_management_system/models/app_settings.dart';
 import 'package:class_management_system/providers/app_data_provider.dart';
 import 'package:class_management_system/services/desktop_service.dart';
 import 'package:class_management_system/services/error_log_service.dart';
+
+import 'test_helpers.dart';
 import 'package:class_management_system/widgets/close_confirm_dialog.dart';
 
 const MethodChannel _windowChannel = MethodChannel('window_manager');
 const MethodChannel _trayChannel = MethodChannel('tray_manager');
 const MethodChannel _ballChannel = MethodChannel('class_management_system/ball');
+const MethodChannel _sessionChannel = MethodChannel(
+  'class_management_system/session',
+);
+const MethodChannel _pathProviderChannel = MethodChannel(
+  'plugins.flutter.io/path_provider',
+);
 
 class _Recorded {
   final List<MethodCall> calls = [];
@@ -52,6 +61,8 @@ void main() {
   late AppDataProvider provider;
   late bool trayWorks;
   late List<String> sequence;
+  late _Recorded session;
+  late Directory tempRoot;
 
   void mock(MethodChannel channel, String label, _Recorded rec,
       Object? Function(MethodCall) onCall) {
@@ -72,8 +83,18 @@ void main() {
     window = _Recorded();
     tray = _Recorded();
     ball = _Recorded();
+    session = _Recorded();
     trayWorks = true;
     sequence = <String>[];
+    tempRoot = createStorageTestRoot('cms_close_chain');
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return tempRoot.parent.path;
+      }
+      return null;
+    });
 
     mock(_windowChannel, 'window', window, (call) {
       switch (call.method) {
@@ -98,17 +119,28 @@ void main() {
       return null;
     });
     mock(_ballChannel, 'ball', ball, (call) => null);
+    mock(_sessionChannel, 'session', session, (call) => null);
 
     provider = AppDataProvider();
     provider.replaceStudents(['张三', '李四']);
   });
 
-  tearDown(() {
+  tearDown(() async {
     service.debugReset();
-    for (final channel in [_windowChannel, _trayChannel, _ballChannel]) {
+    // 先排空日志队列再删临时目录，避免删除与排队写入竞态刷出
+    // "操作日志写入失败：PathNotFoundException"。
+    await flushErrorLogs();
+    for (final channel in [
+      _windowChannel,
+      _trayChannel,
+      _ballChannel,
+      _sessionChannel,
+      _pathProviderChannel,
+    ]) {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
     }
+    await deleteStorageTestRoot(tempRoot);
   });
 
   group('A-09 关闭拦截先于托盘建立', () {
@@ -265,6 +297,53 @@ void main() {
     });
 
   });
+
+  group('A-24 / A-11 退出与关机时排空日志、落盘再回执', () {
+    test('退出前把日志队列排空（关窗前最后一条日志不丢）', () async {
+      await service.initialize(
+        provider: provider,
+        navigatorKey: GlobalKey<NavigatorState>(),
+      );
+      appendErrorLog('test', '关窗前最后一条日志', null, context: 'A-24');
+
+      await service.quitApp();
+
+      // 错误日志落盘是加密的（LRX3），必须走服务的导出接口比对明文。
+      final content = await exportErrorLogText();
+      expect(
+        content,
+        contains('关窗前最后一条日志'),
+        reason: 'quitApp 必须在关窗前排空日志队列，否则最后几条日志随进程消失',
+      );
+    });
+
+    test('关机通知：先落盘、再回执 shutdownPrepared', () async {
+      final counting = _CountingProvider();
+      await service.initialize(
+        provider: counting,
+        navigatorKey: GlobalKey<NavigatorState>(),
+      );
+
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        _sessionChannel.name,
+        const StandardMethodCodec()
+            .encodeMethodCall(const MethodCall('prepareForShutdown')),
+        (_) {},
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      expect(counting.flushCalls, 1, reason: '关机前必须把待落盘数据刷下去');
+      expect(
+        session.calls.map((c) => c.method),
+        contains('shutdownPrepared'),
+        reason: '落盘后必须回执，原生侧据此提前结束 500ms 等待',
+      );
+
+      final content = await exportErrorLogText();
+      expect(content, contains('系统即将关机'));
+    });
+  });
 }
 
 /// flushPendingSaves 永不完成，用来触发退出看门狗。
@@ -273,4 +352,14 @@ class _HangingProvider extends AppDataProvider {
 
   @override
   Future<void> flushPendingSaves() => _never.future;
+}
+
+/// 统计关机前落盘调用次数。
+class _CountingProvider extends AppDataProvider {
+  int flushCalls = 0;
+
+  @override
+  Future<void> flushPendingSaves() async {
+    flushCalls++;
+  }
 }

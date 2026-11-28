@@ -4,10 +4,64 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
 #include "dark_mode.h"
 #include "flutter_window.h"
 #include "utils.h"
+
+namespace {
+
+// 审计 A-10：单实例互斥体必须"同一用户跨会话"互斥。
+//
+// 旧名字是 `ClassManagementSystem.Local.SingleInstance` —— 名字里虽然有
+// ".Local."，但它不是 `Local\` 命名空间前缀，等价于会话私有：RDP 或快速
+// 用户切换后再起一个会话，就能拿到第二个进程并发写同一份 .enc。
+//
+// 现在改成 `Global\<名字>.<用户SID>`：同一用户在任意会话只允许一个实例，
+// 不同用户（各自的数据目录不同）互不影响。取不到 SID 或没有建全局对象的
+// 权限时退回带 SID 的 `Local\` 名字：仍比原来严格（同会话内互斥仍然有效），
+// 但不会让程序起不来。
+std::wstring CurrentUserSidString() {
+  HANDLE token = nullptr;
+  if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    return std::wstring();
+  }
+  DWORD size = 0;
+  ::GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+  std::wstring sid;
+  if (size > 0) {
+    std::vector<BYTE> buffer(size);
+    if (::GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
+      auto* token_user = reinterpret_cast<TOKEN_USER*>(buffer.data());
+      LPWSTR text = nullptr;
+      if (::ConvertSidToStringSidW(token_user->User.Sid, &text)) {
+        sid.assign(text);
+        ::LocalFree(text);
+      }
+    }
+  }
+  ::CloseHandle(token);
+  return sid;
+}
+
+HANDLE CreateInstanceMutex() {
+  constexpr wchar_t kBaseName[] = L"ClassManagementSystem.SingleInstance";
+  const std::wstring sid = CurrentUserSidString();
+  const std::wstring suffix = sid.empty() ? std::wstring(L"default") : sid;
+  const std::wstring global_name =
+      std::wstring(L"Global\\") + kBaseName + L"." + suffix;
+  HANDLE handle = ::CreateMutexW(nullptr, TRUE, global_name.c_str());
+  if (handle != nullptr) {
+    return handle;
+  }
+  const std::wstring local_name =
+      std::wstring(L"Local\\") + kBaseName + L"." + suffix;
+  return ::CreateMutexW(nullptr, TRUE, local_name.c_str());
+}
+
+}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -27,8 +81,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // 单实例保护：程序支持最小化到托盘后继续在后台运行，
   // 重复启动会产生两个进程并发写同一份数据文件，因此
   // 第二次启动只唤起已有实例的主窗口，然后本进程直接退出。
-  HANDLE instance_mutex =
-      ::CreateMutexW(nullptr, TRUE, L"ClassManagementSystem.Local.SingleInstance");
+  HANDLE instance_mutex = CreateInstanceMutex();
   if (instance_mutex == nullptr) {
     return EXIT_FAILURE;
   }

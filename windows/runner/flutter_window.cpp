@@ -360,6 +360,27 @@ bool FlutterWindow::OnCreate() {
     }
   });
 
+  // 会话结束通道（审计 A-11）：Dart 落盘完成后回 shutdownPrepared，
+  // 这里 SetEvent 让 WM_QUERYENDSESSION 的短等待立刻结束。
+  session_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "class_management_system/session",
+          &flutter::StandardMethodCodec::GetInstance());
+  session_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "shutdownPrepared") {
+          if (shutdown_event_ != nullptr) {
+            ::SetEvent(shutdown_event_);
+          }
+          result->Success();
+          return;
+        }
+        result->NotImplemented();
+      });
+
   // Flutter can complete the first frame before the "show window" callback is
   // registered. The following call ensures a frame is pending to ensure the
   // window is shown. It is a no-op if the first frame hasn't completed yet.
@@ -371,6 +392,11 @@ bool FlutterWindow::OnCreate() {
 void FlutterWindow::OnDestroy() {
   // 通道依赖引擎的消息器，先于控制器释放。
   ball_channel_ = nullptr;
+  session_channel_ = nullptr;
+  if (shutdown_event_ != nullptr) {
+    ::CloseHandle(shutdown_event_);
+    shutdown_event_ = nullptr;
+  }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -407,16 +433,55 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       break;
 
-    case WM_QUERYENDSESSION:
-      // 关机/注销：显式放行，绝不阻塞系统关机。
-      // 已知取舍（审计 P2-xx）：C++ 无法等待 Dart 异步写盘链，本次会话
-      // 尚未落盘的最近一次异步保存可能丢失；但保存走 AtomicFile 原子写，
-      // 主数据文件绝不会出现半截/损坏，最坏情况仅损失最后一次未落盘的修改。
-      // 数据文件在文档目录，关机不会触碰。
+    case WM_QUERYENDSESSION: {
+      // 审计 A-11：关机/注销时尽力落盘。
+      //
+      // 之前这里直接 return TRUE —— Dart 侧完全不知道系统要关机，最近一次
+      // 异步保存（以及日志队列）会随进程结束丢掉。
+      //
+      // 现在的做法：
+      //  1) SetProcessShutdownParameters 争取更长的关机等待时间；
+      //  2) 通知 Dart 落盘（prepareForShutdown）；
+      //  3) 短等待最多 500ms，期间继续泵消息，让 Dart 的回执能被处理；
+      //  4) 无论是否等到回执都返回 TRUE —— 绝不能阻塞系统关机。
+      //
+      // 边界（必须写进发布说明）：Windows 仍可能在 500ms 内终止进程，所以
+      // 这里只保证"主数据文件始终是原子写后的完整文件"，不保证零丢失。
+      ::SetProcessShutdownParameters(0x4FF, SHUTDOWN_NORETRY);
+      if (shutdown_event_ == nullptr) {
+        shutdown_event_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+      }
+      if (shutdown_event_ != nullptr) {
+        ::ResetEvent(shutdown_event_);
+      }
+      if (session_channel_ != nullptr) {
+        session_channel_->InvokeMethod(
+            "prepareForShutdown",
+            std::make_unique<flutter::EncodableValue>());
+      }
+      if (shutdown_event_ != nullptr) {
+        const DWORD deadline = ::GetTickCount() + 500;
+        while (::GetTickCount() < deadline) {
+          const DWORD wait_result =
+              ::WaitForSingleObject(shutdown_event_, 20);
+          if (wait_result == WAIT_OBJECT_0) {
+            break;
+          }
+          // 等待期间继续泵消息：Dart 的 shutdownPrepared 回执走的是平台线程
+          // 消息队列，不泵就永远收不到。
+          MSG pending;
+          while (::PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
+            ::TranslateMessage(&pending);
+            ::DispatchMessageW(&pending);
+          }
+        }
+      }
       return TRUE;
+    }
 
     case WM_ENDSESSION:
-      // 会话即将结束，进程将被系统直接终止；无需额外收尾（见 WM_QUERYENDSESSION 注释）。
+      // 会话即将结束，进程将被系统直接终止。
+      // WM_QUERYENDSESSION 已尽力落盘，这里不再等待（也不删日志文件）。
       return 0;
   }
 
