@@ -24,7 +24,7 @@ Widget _wrap(AppDataProvider provider) => ChangeNotifierProvider.value(
 
 Future<AppDataProvider> _pumpPage(WidgetTester tester) async {
   final provider = AppDataProvider();
-  provider.setPasswordHash(SecurityService.hashPassword('1234'));
+  await provider.setPasswordHash(SecurityService.hashPassword('1234'));
   provider.setPasswordEnabled(true);
   await tester.pumpWidget(_wrap(provider));
   await tester.pump();

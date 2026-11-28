@@ -23,6 +23,7 @@ import './providers/app_data_provider.dart';
 import './services/desktop_service.dart';
 import './services/error_log_service.dart';
 import './services/local_storage_paths.dart';
+import './services/security_service.dart';
 import './services/storage_service.dart';
 import './services/operation_log_service.dart';
 import './services/update_check_service.dart';
@@ -553,7 +554,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted || _factoryPasswordPrompted) return;
     final settings =
         Provider.of<AppDataProvider>(context, listen: false).appData.settings;
-    if (!settings.passwordEnabled || settings.passwordHash.isNotEmpty) return;
+    if (!settings.passwordEnabled ||
+        !SecurityService.isUsingFactoryPassword(settings.passwordHash)) {
+      return;
+    }
     _factoryPasswordPrompted = true;
     final changed = await ChangePasswordDialog.show(
       context,

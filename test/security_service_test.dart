@@ -86,4 +86,24 @@ void main() {
     expect(SecurityService.verifyPassword('000000', storedHash: twoSegment),
         isFalse);
   });
+
+  group('A-17 出厂默认密码识别', () {
+    test('哈希为空视为仍在用出厂默认密码', () {
+      expect(SecurityService.isUsingFactoryPassword(''), isTrue);
+      expect(SecurityService.isUsingFactoryPassword('   '), isTrue);
+    });
+
+    test('出厂裸 SHA-256 常量被识别（大小写与空白不敏感）', () {
+      const raw =
+          '5582868f17d5b4fd3aa9fe7251f8409dcfb6a11f4653e3e704bbf4842786ef6f';
+      expect(SecurityService.isUsingFactoryPassword(raw), isTrue);
+      expect(SecurityService.isUsingFactoryPassword(raw.toUpperCase()), isTrue);
+      expect(SecurityService.isUsingFactoryPassword('  $raw '), isTrue);
+    });
+
+    test('用户自设的加盐哈希不算出厂密码', () {
+      final stored = SecurityService.hashPassword('abcd1234');
+      expect(SecurityService.isUsingFactoryPassword(stored), isFalse);
+    });
+  });
 }

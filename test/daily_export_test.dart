@@ -283,7 +283,9 @@ void main() {
   testWidgets('② 今日记录导出不要求管理密码', (tester) async {
     // 用户反馈：导出今日记录属于高频基础功能，不应再要求进入班主任管理。
     provider.setPasswordEnabled(true);
-    provider.setPasswordHash(SecurityService.hashPassword('pass1234'));
+    await provider.setPasswordHash(
+      SecurityService.hashPassword('pass1234'),
+    );
 
     tester.view.physicalSize = const Size(1400, 1000);
     tester.view.devicePixelRatio = 1.0;
@@ -496,7 +498,9 @@ void main() {
 
   testWidgets('⑤ 分别导出多日期只验证一次密码，取消后不再重复弹', (tester) async {
     provider.setPasswordEnabled(true);
-    provider.setPasswordHash(SecurityService.hashPassword('pass1234'));
+    await provider.setPasswordHash(
+      SecurityService.hashPassword('pass1234'),
+    );
 
     tester.view.physicalSize = const Size(1400, 1000);
     tester.view.devicePixelRatio = 1.0;

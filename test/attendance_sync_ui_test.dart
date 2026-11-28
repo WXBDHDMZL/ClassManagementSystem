@@ -72,7 +72,7 @@ void main() {
 
   testWidgets('记录列表：开启密码后走密码框删除同步记录也不报错', (tester) async {
     final provider = _providerWithSyncedRecord();
-    provider.setPasswordHash(SecurityService.hashPassword('1234'));
+    await provider.setPasswordHash(SecurityService.hashPassword('1234'));
     provider.setPasswordEnabled(true);
 
     await tester.pumpWidget(

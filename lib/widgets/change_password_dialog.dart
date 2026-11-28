@@ -125,7 +125,17 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
       final newHash =
           await SecurityService.hashPasswordAsync(_newController.text);
       if (!mounted) return;
-      provider.setPasswordHash(newHash);
+      // 审计 A-19：等到真正落盘再报成功，避免"界面说改了、重启又变回旧密码"。
+      final saved = await provider.setPasswordHash(newHash);
+      if (!mounted) return;
+      if (!saved) {
+        showTopSnackBar(
+          context,
+          '密码已更新但写入磁盘失败：请检查磁盘空间或文件权限后重试。',
+          isError: true,
+        );
+        return;
+      }
       showTopSnackBar(
         context,
         widget.requireCurrent ? '$label已修改' : '$label已设置',

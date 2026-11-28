@@ -40,7 +40,8 @@ class SecuritySettingsPage extends StatelessWidget {
               : '尚未设置管理密码。设置后，修改他人记录、导入、'
                   '修改设置等敏感操作需要先进入班主任管理。',
         ),
-        if (configured && settings.passwordHash.isEmpty) ...[
+        if (configured &&
+            SecurityService.isUsingFactoryPassword(settings.passwordHash)) ...[
           const SizedBox(height: 8),
           const SettingsHint(
             '⚠️ 当前仍在使用出厂默认密码，建议立即修改为只有你知道的密码。',
@@ -159,8 +160,8 @@ class SecuritySettingsPage extends StatelessWidget {
     // 仍在使用出厂默认密码（哈希为空）时无需验证旧密码：它不是用户设置的，
     // 一旦丢失或未知，强制验证会让用户永远无法改密。
     final settings = provider.appData.settings;
-    final usingFactoryPassword =
-        settings.passwordEnabled && settings.passwordHash.isEmpty;
+    final usingFactoryPassword = settings.passwordEnabled &&
+        SecurityService.isUsingFactoryPassword(settings.passwordHash);
     final ok = await ChangePasswordDialog.show(
       context,
       requireCurrent: !usingFactoryPassword,
@@ -192,9 +193,15 @@ class SecuritySettingsPage extends StatelessWidget {
     // 先关闭开关再清空哈希：中途失败时不会留下“启用密码但哈希为空”的
     // 出厂默认状态，用户仍可凭原密码进入并重试。
     provider.setPasswordEnabled(false);
-    provider.setPasswordHash('');
+    final cleared = await provider.setPasswordHash('');
     provider.exitManagementMode();
-    if (context.mounted) showTopSnackBar(context, '已关闭管理密码');
+    if (!context.mounted) return;
+    // 审计 A-19：清空哈希同样要落盘确认，否则重启后旧密码又"复活"。
+    showTopSnackBar(
+      context,
+      cleared ? '已关闭管理密码' : '已关闭管理密码，但写入磁盘失败：重启后可能恢复原密码状态。',
+      isError: !cleared,
+    );
   }
 
   Future<void> _generateRecoveryCode(

@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../constants/app_version.dart';
 import '../constants/attendance_feature.dart';
+import '../services/security_service.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
@@ -492,7 +493,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             : '未启用（记录不标注身份）';
       case _SettingsSection.security:
         if (!settings.passwordEnabled) return '未设置管理密码';
-        if (settings.passwordHash.isEmpty) {
+        if (SecurityService.isUsingFactoryPassword(settings.passwordHash)) {
           return '正在使用出厂默认管理密码，建议尽快修改';
         }
         return '已设置管理密码';

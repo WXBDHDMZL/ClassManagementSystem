@@ -45,18 +45,26 @@ mixin _SettingsDomain on _ProviderBase {
   }
 
   /// 保存管理密码哈希（空字符串表示恢复出厂默认密码）。
-  void setPasswordHash(String hash) {
+  ///
+  /// 审计 A-19：返回是否已真正落盘。密码改动是安全相关写入，
+  /// 调用方必须等到结果再提示成功，否则断电/写盘失败会让用户
+  /// 以为密码已改，重启后仍是旧密码。
+  Future<bool> setPasswordHash(String hash) async {
     // 修复（审计 M1）：provider 方法也必须校验，不能只靠设置页 UI。
     // 使用出厂默认密码（哈希为空）时允许首次改密，否则要求管理会话。
     if (_appData.settings.passwordEnabled &&
         _appData.settings.passwordHash.isNotEmpty &&
         !_canManageSecuritySettings) {
       _log('密码设置', '拒绝未授权的管理密码哈希修改');
-      return;
+      return false;
     }
     _appData.settings = _appData.settings.copyWith(passwordHash: hash);
     _log('密码设置', hash.isEmpty ? '清除管理密码' : '设置/修改管理密码');
-    _save();
+    final saved = await saveNow();
+    if (!saved) {
+      _log('密码设置', '管理密码写入失败，本次修改未落盘');
+    }
+    return saved;
   }
 
   /// 设置/重新生成恢复码：只保存加盐哈希与创建日期，不保存明文。

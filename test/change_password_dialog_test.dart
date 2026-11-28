@@ -10,13 +10,32 @@ import 'package:class_management_system/widgets/change_password_dialog.dart';
 
 import 'test_helpers.dart';
 
+/// 落盘成功的桩：widget 测试跑在 FakeAsync 下，真实文件 IO 的完成回调
+/// 送不回来会让整测试挂死，所以对话框测试只验"等结果再提示"的时序，
+/// 真实持久化由本文件末尾的 provider 级用例覆盖。
+class _SavingProvider extends AppDataProvider {
+  @override
+  Future<bool> saveNow() async => true;
+}
+
+/// 落盘失败的 provider：模拟磁盘不可写时改密码的反馈（审计 A-19）。
+class _UnwritableProvider extends AppDataProvider {
+  @override
+  Future<bool> saveNow() async => false;
+}
+
 Future<AppDataProvider> _pumpDialog(
   WidgetTester tester, {
   required String storedPassword,
+  AppDataProvider? override,
 }) async {
-  final provider = AppDataProvider();
-  provider.setPasswordEnabled(true);
-  provider.setPasswordHash(SecurityService.hashPassword(storedPassword));
+  final provider = override ?? _SavingProvider();
+  await tester.runAsync(() async {
+    provider.setPasswordEnabled(true);
+    await provider.setPasswordHash(
+      SecurityService.hashPassword(storedPassword),
+    );
+  });
   await tester.pumpWidget(
     ChangeNotifierProvider<AppDataProvider>.value(
       value: provider,
@@ -128,5 +147,67 @@ void main() {
       isFalse,
     );
     await _settleSnackBar(tester);
+  });
+
+  testWidgets('落盘失败：明确提示写入失败，不谎报修改成功', (tester) async {
+    // 审计 A-19：密码改动落盘失败时，界面必须报错而不是"已修改"。
+    final provider = await _pumpDialog(
+      tester,
+      storedPassword: 'abcd1234',
+      override: _UnwritableProvider(),
+    );
+
+    await _enter(tester, 0, 'abcd1234');
+    await _enter(tester, 1, 'xyz9876');
+    await _enter(tester, 2, 'xyz9876');
+    await tester.tap(find.text('确定修改'));
+    await pumpUntilRealAsync(
+      tester,
+      () => find.textContaining('写入磁盘失败').evaluate().isNotEmpty,
+    );
+
+    expect(find.textContaining('写入磁盘失败'), findsOneWidget);
+    expect(find.text('管理密码已修改'), findsNothing);
+    expect(provider.appData.settings.passwordHash, isNotEmpty);
+    await _settleSnackBar(tester);
+  });
+
+  test('落盘成功：重新加载后新密码仍然有效（真实临时数据目录）', () async {
+    final tempDir = createStorageTestRoot('cms_password_persist');
+    addTearDown(() => deleteStorageTestRoot(tempDir));
+
+    final provider = AppDataProvider();
+    addTearDown(provider.dispose);
+    await provider.initialize();
+    provider.setPasswordEnabled(true);
+
+    final saved = await provider.setPasswordHash(
+      SecurityService.hashPassword('xyz9876'),
+    );
+    expect(saved, isTrue, reason: 'A-19：落盘成功必须返回 true');
+    await flushWrites(provider);
+
+    final reloaded = AppDataProvider();
+    addTearDown(reloaded.dispose);
+    await reloaded.initialize();
+    expect(
+      SecurityService.verifyPassword(
+        'xyz9876',
+        storedHash: reloaded.appData.settings.passwordHash,
+      ),
+      isTrue,
+      reason: 'A-19：改密码必须先落盘，重启后仍应是新密码',
+    );
+  });
+
+  test('落盘失败：setPasswordHash 返回 false，不谎报成功', () async {
+    final provider = _UnwritableProvider();
+    addTearDown(provider.dispose);
+    provider.setPasswordEnabled(true);
+
+    final saved = await provider.setPasswordHash(
+      SecurityService.hashPassword('xyz9876'),
+    );
+    expect(saved, isFalse, reason: 'A-19：没写进磁盘就不能返回成功');
   });
 }

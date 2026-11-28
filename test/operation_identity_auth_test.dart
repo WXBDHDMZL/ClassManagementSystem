@@ -23,7 +23,7 @@ void main() {
   testWidgets('有管理密码时，选择班主任操作身份会要求验证', (tester) async {
     final provider = AppDataProvider();
     addTearDown(provider.dispose);
-    provider.setPasswordHash(SecurityService.hashPassword('1234'));
+    await provider.setPasswordHash(SecurityService.hashPassword('1234'));
     provider.setPasswordEnabled(true);
     provider.setIdentityFeatureEnabled(true);
 

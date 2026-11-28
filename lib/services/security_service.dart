@@ -90,6 +90,20 @@ class SecurityService {
   static String effectivePasswordHash(String storedHash) =>
       storedHash.isEmpty ? _defaultPasswordHash : storedHash;
 
+  /// 是否仍在使用出厂默认密码（审计 A-17）。
+  ///
+  /// 判定语义（按修复裁决固定）：当前存储的哈希为空（沿用出厂密码），
+  /// 或严格等于内置的出厂裸 SHA-256 常量。
+  /// 出厂密码是公开在源码里的固定哈希，任何人都能离线比对，
+  /// 因此它只能当"首次进入"的初始口令，不能当长期密码。
+  /// 说明：用户把密码改回出厂口令时，存的是带盐 `p2:` 哈希，
+  /// 不会命中这里的常量比较；这类情况靠"设置页持续提示 + 启动提示"覆盖。
+  static bool isUsingFactoryPassword(String storedHash) {
+    final trimmed = storedHash.trim().toLowerCase();
+    if (trimmed.isEmpty) return true;
+    return trimmed == _defaultPasswordHash;
+  }
+
   /// 新版口令格式前缀（V2.30.2 加固，审查 7.5）：
   /// - 当前格式：`p2:迭代次数:盐:哈希`。
   static const String _pbkdf2Prefix = 'p2:';

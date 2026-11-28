@@ -117,7 +117,7 @@ void main() {
 
   testWidgets('设置面板：记录设置需要密码，取消后保持当前页', (tester) async {
     final provider = AppDataProvider();
-    provider.setPasswordHash(SecurityService.hashPassword('1234'));
+    await provider.setPasswordHash(SecurityService.hashPassword('1234'));
     provider.setPasswordEnabled(true);
     await _pumpPanel(tester, provider);
     expect(find.text('需管理密码'), findsWidgets);
@@ -139,7 +139,7 @@ void main() {
 
   testWidgets('设置面板：管理会话结束或超时后锁定安全页，重新验证后恢复', (tester) async {
     final provider = AppDataProvider();
-    provider.setPasswordHash(SecurityService.hashPassword('1234'));
+    await provider.setPasswordHash(SecurityService.hashPassword('1234'));
     provider.setPasswordEnabled(true);
     await _pumpPanel(tester, provider);
 
