@@ -67,7 +67,7 @@ Future<void> _factoryReset(
     title: '再次确认',
     message: '真的要清空全部数据并恢复出厂设置吗？',
     optionLabel: '同时清除全部备份与日志',
-    optionHint: '会删除备份目录中的全部备份文件（含本次恢复前自动生成的备份）与本机运行日志。',
+    optionHint: '会删除本程序生成的备份文件（含本次恢复前自动生成的那份）与本机运行日志；备份目录中的其它文件不会被删除。',
     cancelLabel: '再想想',
     confirmLabel: '确认恢复出厂',
   );

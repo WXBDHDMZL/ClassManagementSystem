@@ -165,17 +165,35 @@ mixin _ExportBackupDomain on _ProviderBase {
     }
   }
 
-  /// 是否为“从备份恢复”列表中的备份文件。
+  /// 本程序备份文件的名称前缀（`班级管理系统_备份_`）。
   ///
-  /// 清理与列表必须用**同一个判定**：列表里能选中的备份，清理时就必须能删掉，
-  /// 否则恢复出厂勾选“同时清除全部备份”后仍能一键恢复出完整旧数据。
-  static bool _isBackupFile(String name) =>
-      name.endsWith('.enc') && !name.endsWith('.enc.bak');
+  /// 审计 A-03：备份目录允许用户自定义，可能指向 `D:\加密资料` 这类
+  /// 存有其它软件 `*.enc` 的目录。此前只要目录不在数据目录范围内，就按
+  /// “`.enc` 即备份”删除，会顺手删掉与本草稿无关的文件。删除是**不可恢复**
+  /// 操作，因此只认本程序自己写的名字，宁可有插件式手工备份漏删。
+  static String get _ourBackupPrefix =>
+      '${AppDataProvider.backupFilePrefix}_';
 
-  /// 删除备份目录中的全部备份文件（恢复出厂“同时清除全部备份”用）。
+  /// 是否本程序生成的备份文件（`班级管理系统_备份_<时间戳或自定义>.enc`）。
+  static bool _isOurBackupName(String name) =>
+      name.startsWith(_ourBackupPrefix) &&
+      name.endsWith('.enc') &&
+      !name.endsWith('.enc.bak');
+
+  /// 是否本程序备份的日志快照（`<备份名>.enc.logs`）。
+  static bool _isOurSnapshotName(String name) =>
+      name.startsWith(_ourBackupPrefix) && name.endsWith('.enc.logs');
+
+  /// 是否本程序备份的便携口令文件（`<备份名>.enc.pkey`）。
+  static bool _isOurPortableKeyName(String name) =>
+      name.startsWith(_ourBackupPrefix) && name.endsWith('.enc.pkey');
+
+  /// 删除备份目录中由本程序生成的备份文件（恢复出厂“同时清除全部备份”用）。
   ///
-  /// 覆盖范围与 `listBackupFiles` 一致（含手动改名的备份），
-  /// 并连带删除对应的 `.logs` 日志快照；不碰目录中的其它文件。返回删除份数。
+  /// 覆盖范围：`班级管理系统_备份_*` 的备份、以及它们旁边的 `.logs`/`.pkey`。
+  /// 审计 A-03：**不碰**目录里的其它文件（别的软件同名后缀的 `.enc`、用户
+  /// 放在这里的笔记等）——删除不可恢复，宁可有手工改名的备份漏删，也不能
+  /// 删错别人的文件。返回删除份数。
   Future<int> clearAllBackups() async {
     // 审计 A-01/A-18a 规则 9：阻断态下 .bak 可能是唯一可用副本，禁止批量清理。
     if (_blockedByStartup()) return 0;
@@ -184,37 +202,19 @@ mixin _ExportBackupDomain on _ProviderBase {
       final directory = await backupDirectory();
       final dir = Directory(directory);
       if (!await dir.exists()) return 0;
-      // 审计 P1-4：备份路径可以被用户改成数据目录、文档根目录或桌面 ——
-      // 这些目录里还有本程序的主数据文件与其它软件的 *.enc。只要目标目录
-      // 是数据目录本身或其上级，就只清理带本程序备份前缀的文件，绝不把
-      // 主数据文件（及 .bak）或陌生 .enc 当备份删掉。
+      // 备份路径可以被用户改成数据目录、文档根目录或桌面 —— 这些目录里
+      // 还有本程序的主数据文件。除了"只认本程序前缀"之外，再显式跳过
+      // 主数据文件与它的 `.bak`，避免误删正在使用的数据。
       final dataPath = await _storageService.dataFilePath;
-      final dataDir = File(dataPath).parent.path;
-      final normalizedDir = directory.replaceAll('\\', '/').toLowerCase();
-      final normalizedDataDir = dataDir.replaceAll('\\', '/').toLowerCase();
-      final inDataArea =
-          normalizedDir == normalizedDataDir ||
-          normalizedDataDir.startsWith('$normalizedDir/');
       final mainName = dataPath.split(RegExp(r'[/\\]')).last;
       await for (final entity in dir.list()) {
         if (entity is! File) continue;
         final name = entity.path.split(RegExp(r'[/\\]')).last;
         if (name == mainName || name == '$mainName.bak') continue;
-        final isBackup =
-            _isBackupFile(name) &&
-            (!inDataArea ||
-                name.startsWith('${AppDataProvider.backupFilePrefix}_') ||
-                name == '${AppDataProvider.backupFilePrefix}.enc');
-        final isLogSnapshot = name.endsWith('.enc.logs');
-        final isPortableKey = name.endsWith('.enc.pkey');
+        final isBackup = _isOurBackupName(name);
+        final isLogSnapshot = _isOurSnapshotName(name);
+        final isPortableKey = _isOurPortableKeyName(name);
         if (!isBackup && !isLogSnapshot && !isPortableKey) continue;
-        final isOurSidecar =
-            name.startsWith('${AppDataProvider.backupFilePrefix}_') ||
-            name == '${AppDataProvider.backupFilePrefix}.enc.pkey' ||
-            name == '${AppDataProvider.backupFilePrefix}.enc.logs';
-        if ((isLogSnapshot || isPortableKey) && inDataArea && !isOurSidecar) {
-          continue;
-        }
         try {
           await entity.delete();
           if (isBackup) removed++;
@@ -363,6 +363,11 @@ mixin _ExportBackupDomain on _ProviderBase {
           if (!name.endsWith('.enc') || name.endsWith('.enc.bak')) continue;
           // V5.0.0：旧版固定名备份不列入可恢复列表（文件保留，不静默删除）。
           if (name == '${AppDataProvider.backupFilePrefix}.enc') continue;
+          // 审计 A-03：列表与“清理备份”必须用同一个判定（都只认本程序
+          // 命名的文件）。此前列表把目录里任意 `.enc` 都当备份，于是清理
+          // 也跟着"任意 .enc"删 —— 用户把备份目录指到别的资料夹时会被
+          // 误删。放在这里的其它 `.enc` 仍可通过“浏览其他备份文件…”恢复。
+          if (!_isOurBackupName(name)) continue;
           final stat = await entity.stat();
           files.add(
             BackupFileInfo(

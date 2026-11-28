@@ -295,11 +295,16 @@ void main() {
     File('${dir.path}/其他文件.txt').writeAsStringSync('keep');
 
     final removed = await p.clearAllBackups();
-    expect(removed, 2,
-        reason: '清理范围必须与“从备份恢复”列表一致：列表里能选中的备份都要删掉，'
+    // 旧期望：removed == 2，且“手动备份.enc”被一并删除（当时清理与列表都按
+    // "任意 .enc 即备份"判定）。
+    // 新期望（审计 A-03）：只删本程序命名的备份。备份目录可被用户指向任意
+    // 目录，按"任意 .enc"删除会误删别人的文件且不可恢复；恢复列表同步收窄
+    // 到本程序命名，重命名的备份改由“浏览其他备份文件…”显式选择。
+    expect(removed, 1,
+        reason: '清理范围必须与“从备份恢复”列表一致：只清理本程序命名的备份，'
             '日志快照不计入份数');
-    expect(File('${dir.path}/手动备份.enc').existsSync(), isFalse,
-        reason: '手动改名的备份同样出现在恢复列表里，必须一并删除');
+    expect(File('${dir.path}/手动备份.enc').existsSync(), isTrue,
+        reason: '非本程序命名的文件不得删除（A-03），只能通过“浏览其他备份文件…”恢复');
     expect(dir.listSync().whereType<File>().map((f) => f.path.endsWith('.logs')),
         isNot(contains(true)));
     expect(File('${dir.path}/其他文件.txt').existsSync(), isTrue,
