@@ -190,4 +190,29 @@ void main() {
       expect(confirmButton(tester, giveUpLabel).onPressed, isNotNull);
     });
   });
+
+  // GUI 验收发现：1080x680（150% 缩放 ≈ 720x453 逻辑像素）窗口下，旧布局把
+  // 复选项与按钮挤出窗口，用户根本无法完成"以空库继续"。对话框改成
+  // scrollable 后，底部按钮必须始终可见可点。
+  group('小窗口下按钮仍可用（GUI 验收回归）', () {
+    testWidgets('1280x800@1.5 时主按钮可见且可点', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.5;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await prepareBlocked(tester);
+      await openDialog(tester, StartupDataBlockKind.corrupted, (_) {});
+
+      expect(find.text('稍后处理').hitTestable(), findsOneWidget);
+      expect(find.text('确认以空库继续').hitTestable(), findsNothing,
+          reason: '未输入短语前主按钮必须是禁用的');
+
+      // 关键：错误提示语与确认输入框在滚动区内，主按钮区不该被挤出可视范围。
+      final dialogRect = tester.getRect(find.byType(AlertDialog));
+      final windowSize = tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(dialogRect.bottom, lessThanOrEqualTo(windowSize.height + 0.5),
+          reason: '对话框不得超出窗口底部，否则按钮点不到');
+    });
+  });
 }

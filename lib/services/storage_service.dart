@@ -323,6 +323,20 @@ class StorageService {
     _mainFileParsable = !fileExisted;
     _lastWrittenLength = -1;
     _lastWrittenDigest = null;
+    // 审计 A-02 补充（GUI 验收发现）：`.bak` 能解开时此前会直接把它写回主文件，
+    // 于是"用户还原了旧的 .enc、而 .bak 是本机较新的一份"会静默丢掉旧数据，
+    // 而且永远走不到下面的指纹判定。指纹只能由本机密钥算出，对不上就说明
+    // 主文件不是当前密钥加密的 —— 此时必须停下来让用户换回原 `.enc.key`，
+    // 不能拿 `.bak` 顶上去。
+    if (fileExisted && await _keyIdMismatch()) {
+      appendErrorLog(
+        'storage_service',
+        '数据密钥与文件指纹不匹配：主文件未隔离、未重置、未用 .bak 覆盖',
+        null,
+        context: 'loadData 判定 keyMismatch（早于 .bak 恢复）',
+      );
+      return DataLoadResult(data: AppData.empty(), keyMismatch: true);
+    }
     // 主文件缺失或损坏时，尝试用上一份备份恢复。
     final backup = await _tryLoadFile('$filePath.bak', throwOnReadError: true);
     if (backup != null) {
@@ -361,17 +375,6 @@ class StorageService {
       if (await legacyMain.exists() || await legacyBackup.exists()) {
         throw const UnsupportedStorageFormatException('不兼容的数据目录布局');
       }
-    }
-    // 主文件与 `.bak` 都解不开时先看指纹（审计 A-02）：指纹证明"密钥不对"
-    // 就绝不能隔离/重置 —— 数据完好，换回原 `.enc.key` 即可恢复。
-    if (fileExisted && await _keyIdMismatch()) {
-      appendErrorLog(
-        'storage_service',
-        '数据密钥与文件指纹不匹配：主文件未隔离、未重置',
-        null,
-        context: 'loadData 判定 keyMismatch',
-      );
-      return DataLoadResult(data: AppData.empty(), keyMismatch: true);
     }
     String? quarantinedPath;
     if (fileExisted) {

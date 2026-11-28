@@ -119,9 +119,15 @@ class _StartupDataBlockDialogState extends State<_StartupDataBlockDialog> {
     final quarantined = widget.provider.quarantinedPath;
 
     return AlertDialog(
+      // GUI 验收发现：1280x800 窗口下（含 150% 缩放）内容超过可用高度，
+      // 按钮被挤出窗口导致用户无法完成确认。scrollable 让标题+正文滚动，
+      // 底部按钮始终可见可点。
+      scrollable: true,
       title: Text(_isKeyMismatch ? '数据密钥与数据文件不匹配' : '数据文件损坏，已隔离保留'),
-      content: SizedBox(
-        width: 520,
+      content: ConstrainedBox(
+        // GUI 验收发现：写死 520 在 1280x800（150% 缩放 ≈ 853 逻辑宽）下会
+        // 超出可用宽度、右侧文字被裁掉。改成上限 520、可用空间更窄时自动收缩。
+        constraints: const BoxConstraints(maxWidth: 520),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

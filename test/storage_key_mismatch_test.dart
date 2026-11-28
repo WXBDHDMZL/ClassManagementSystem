@@ -211,6 +211,42 @@ void main() {
       expect(corruptFiles(), hasLength(1), reason: '隔离副本始终不被自动删除');
     });
 
+    test('`.bak` 能解开也不得绕过指纹判定（GUI 验收发现）', () async {
+      // 场景：用户把旧的 class_management_data.enc + 旧 .keyid 拷回目录，
+      // 而 .bak 是本机当前密钥写的新一份。旧行为会直接拿 .bak 覆盖主文件，
+      // 旧数据被静默丢弃；修复后必须先按指纹判定"密钥不对"并停下来。
+      await storage.loadData();
+      expect(
+        await storage.saveData(AppData.fromJson(const {'students': ['旧数据']})),
+        isTrue,
+      );
+      final encA = await mainFile().readAsBytes();
+      final keyIdA = await File('${mainFile().path}.keyid').readAsString();
+
+      // 清空目录，用另一把密钥重新生成一份"本机的较新数据 + .bak"。
+      await mainFile().delete();
+      await File('${mainFile().path}.keyid').delete().catchError((_) => File(''));
+      StorageService.debugDataKeyOverride = keyB;
+      StorageService.debugResetKey();
+      final storageB = StorageService();
+      await storageB.loadData();
+      expect(await storageB.saveData(AppData.empty()), isTrue);
+      expect(await storageB.saveData(AppData.empty()), isTrue);
+      final bakB = await backupFile().readAsBytes();
+      expect(bakB, isNotEmpty, reason: '需要一份当前密钥能解开的 .bak 才构成这个场景');
+
+      // 把旧主文件与旧指纹放回，密钥仍是新的那把。
+      await mainFile().writeAsBytes(encA);
+      await File('${mainFile().path}.keyid').writeAsString(keyIdA);
+
+      final result = await storageB.loadData();
+      expect(result.keyMismatch, isTrue, reason: '指纹不匹配必须先于 .bak 恢复生效');
+      expect(result.restoredFromBackup, isFalse, reason: '不得用 .bak 顶掉旧数据');
+      expect(await mainFile().readAsBytes(), encA, reason: '主文件必须原样保留');
+      expect(await backupFile().readAsBytes(), bakB, reason: '.bak 也不应被消费掉');
+      expect(corruptFiles(), isEmpty, reason: '错钥不是损坏，不能隔离');
+    });
+
     test('没有隔离文件时 `.bak` 照常轮转（保护不误伤）', () async {
       await storage.loadData();
       expect(await storage.saveData(AppData.empty()), isTrue);
