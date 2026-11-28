@@ -811,7 +811,11 @@ class StorageService {
         final content = await file.readAsString();
         final bytes = base64Decode(content.trim());
         if (!StorageCrypto.isV3(bytes)) return false;
-        final envelope = BackupCrypto.wrapKey(_requireDataKey(), password);
+        // 审计 A-20：PBKDF2 放到后台 isolate，避免创建便携备份时卡住界面。
+        final envelope = await BackupCrypto.wrapKeyAsync(
+          _requireDataKey(),
+          password,
+        );
         final keySidecar = '$targetPath.pkey';
         try {
           await AtomicFile.writeString(keySidecar, envelope);
@@ -880,7 +884,20 @@ class StorageService {
         appendErrorLog('storage_service', e, StackTrace.current);
         return '无法读取备份密钥文件';
       }
-      portableKey = BackupCrypto.unwrapKey(envelope, backupPassword);
+      // 审计 A-20：旧版本写出的信封可能迭代数偏低，仍然放行但记录警告；
+      // 迭代数低于 minIterations 或高于 maxIterations 的信封直接拒绝。
+      if (BackupCrypto.isWeakEnvelope(envelope)) {
+        appendErrorLog(
+          'storage_service',
+          '便携备份的密钥派生强度低于当前标准（仍可恢复）',
+          null,
+          context: 'iterations=${BackupCrypto.iterationsOf(envelope)}',
+        );
+      }
+      portableKey = await BackupCrypto.unwrapKeyAsync(
+        envelope,
+        backupPassword,
+      );
       if (portableKey == null) return '备份口令错误或密钥文件已损坏';
     }
 
