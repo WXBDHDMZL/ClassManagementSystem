@@ -19,6 +19,9 @@ class UpdateSigningKey {
   static const String algorithm = 'Ed25519';
 
   /// 32 字节 Ed25519 公钥的 Base64。
+  ///
+  /// 2026-11-28（V5.0.2）：旧密钥对丢失，轮换为本版公钥；V5.0.0/V5.0.1
+  /// 客户端只认旧公钥，无法自动更新到本版，需手动下载安装一次。
   static const String publicKeyBase64 =
-      'LWqn4rjZTaepwjPYMTYDPGneXs/Lj+tnrCWFMahkn48=';
+      'oDEfgqSgLGSSij55Y5pbenzKhsQeFfO7SczGQxGijQA=';
 }
