@@ -89,16 +89,27 @@ class OperationLogService {
   /// 完整内容仍可通过「导出操作日志」或「打开日志文件位置」查看。
   static const int displayLineLimit = 2000;
 
+  /// 测试专用：注入 `readTail` 的实现，用于构造"日志读不出来"的失败路径。
+  @visibleForTesting
+  static Future<List<String>> Function(File file, {int? maxLines})?
+      debugReadTailOverride;
+
   /// 读取最近 [maxLines] 条操作日志（新→旧顺序返回，供界面展示）。
   static Future<List<String>> recentLines({int maxLines = displayLineLimit}) async {
     try {
       final file = LogFileService.fileIn(await _logDirectory());
       if (!await file.exists()) return const [];
-      return readTail(file, maxLines: maxLines);
-    } catch (e) {
+      // 必须 await：`return future` 的异常不会进本方法的 catch（Dart 语义），
+      // 那样读失败的日志就绕过下方的记录与提示。
+      final override = debugReadTailOverride;
+      if (override != null) return await override(file, maxLines: maxLines);
+      return await readTail(file, maxLines: maxLines);
+    } on Object catch (e) {
+      // 审计 A-23：读失败此前被吞成空列表，界面就会显示"还没有操作日志"，
+      // 用户会误以为日志从未记录过。这里记录后继续上抛，由界面提示读取失败。
       debugPrint('读取操作日志失败：$e');
       appendErrorLog('operation_log_service', e, StackTrace.current);
-      return const [];
+      rethrow;
     }
   }
 

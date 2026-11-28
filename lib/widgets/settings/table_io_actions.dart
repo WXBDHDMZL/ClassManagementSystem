@@ -61,18 +61,34 @@ Future<void> _exportOperationLog(
   );
   if (!verified || !context.mounted) return;
   // 日志已合并为单一文件；导出前解密为明文日志。
-  final text = await OperationLogService.exportText();
+  // 审计 A-23：导出链路此前没有兜底，文件被占用/坏行读取异常会从 onPressed
+  // 直接逃逸，界面毫无反应。这里统一转成可见失败提示。
+  final String text;
+  try {
+    text = await OperationLogService.exportText();
+  } on Object catch (e) {
+    if (!context.mounted) return;
+    showTopSnackBar(context, '导出操作日志失败（读取日志出错）：$e', isError: true);
+    return;
+  }
   if (text.isEmpty) {
     if (!context.mounted) return;
     showTopSnackBar(context, '还没有操作日志', isError: true);
     return;
   }
   final bytes = utf8.encode(text);
-  final path = await _saveExportFile(
-    provider,
-    fileName: '操作日志_导出_${StatisticsService.todayString(AppClock.now())}.txt',
-    bytes: bytes,
-  );
+  final String? path;
+  try {
+    path = await _saveExportFile(
+      provider,
+      fileName: '操作日志_导出_${StatisticsService.todayString(AppClock.now())}.txt',
+      bytes: bytes,
+    );
+  } on Object catch (e) {
+    if (!context.mounted) return;
+    showTopSnackBar(context, '导出操作日志失败（写入文件出错）：$e', isError: true);
+    return;
+  }
   if (!context.mounted) return;
   showTopSnackBar(context, path == null ? '已取消导出' : '操作日志导出成功: $path（明文，含姓名）');
 }
@@ -88,18 +104,33 @@ Future<void> _exportErrorLog(BuildContext context) async {
   );
   if (!verified || !context.mounted) return;
   // provider 在异步读之前取好（避免跨 await 再用 context 触发 use_build_context_synchronously）。
-  final text = await exportErrorLogText();
+  // 审计 A-23：同操作日志，读取/写入失败都要有可见反馈。
+  final String text;
+  try {
+    text = await exportErrorLogText();
+  } on Object catch (e) {
+    if (!context.mounted) return;
+    showTopSnackBar(context, '导出错误日志失败（读取日志出错）：$e', isError: true);
+    return;
+  }
   if (!context.mounted) return;
   if (text.isEmpty) {
     showTopSnackBar(context, '还没有错误日志（没有记录过错误）', isError: true);
     return;
   }
   final bytes = utf8.encode(text);
-  final path = await _saveExportFile(
-    provider,
-    fileName: '错误日志_导出_${StatisticsService.todayString(AppClock.now())}.txt',
-    bytes: bytes,
-  );
+  final String? path;
+  try {
+    path = await _saveExportFile(
+      provider,
+      fileName: '错误日志_导出_${StatisticsService.todayString(AppClock.now())}.txt',
+      bytes: bytes,
+    );
+  } on Object catch (e) {
+    if (!context.mounted) return;
+    showTopSnackBar(context, '导出错误日志失败（写入文件出错）：$e', isError: true);
+    return;
+  }
   if (!context.mounted) return;
   showTopSnackBar(context, path == null ? '已取消导出' : '错误日志导出成功: $path（明文）');
 }

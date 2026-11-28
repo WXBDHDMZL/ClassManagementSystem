@@ -50,7 +50,16 @@ class MaintenanceSettingsPage extends StatelessWidget {
     final file = LogFileService.fileIn(
       await LocalStoragePaths.logDirectory(),
     );
-    final removed = await LogFileService.pruneBefore(file, cutoff);
+    final int removed;
+    try {
+      removed = await LogFileService.pruneBefore(file, cutoff);
+    } on Object catch (e) {
+      // 审计 A-23：清理旧日志此前没有兜底，IO 异常直接从 onPressed 逃逸，
+      // 用户只看到按钮没反应。这里给出可见失败反馈。
+      if (!context.mounted) return;
+      showTopSnackBar(context, '清理旧日志失败：$e', isError: true);
+      return;
+    }
     if (!context.mounted) return;
     showTopSnackBar(context, '已清理 $removed 条旧日志');
   }

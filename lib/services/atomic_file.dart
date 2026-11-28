@@ -35,28 +35,18 @@ class AtomicFile {
 
   /// 原子写入文本：同一 [path] 的多次调用按顺序串行执行。
   static Future<void> writeString(String path, String content) {
-    return _write(path, () async {
-      await _ensureParent(path);
-      final temp = File(
-        '$path.${DateTime.now().microsecondsSinceEpoch}'
-        '${DateTime.now().microsecond}.tmp',
-      );
-      await temp.writeAsString(content, flush: true);
-      await _renameWithRetry(temp, path);
-    });
+    return _write(
+      path,
+      () => _writeTemp(path, (temp) => temp.writeAsString(content, flush: true)),
+    );
   }
 
   /// 原子写入字节。
   static Future<void> writeBytes(String path, List<int> bytes) {
-    return _write(path, () async {
-      await _ensureParent(path);
-      final temp = File(
-        '$path.${DateTime.now().microsecondsSinceEpoch}'
-        '${DateTime.now().microsecond}.tmp',
-      );
-      await temp.writeAsBytes(bytes, flush: true);
-      await _renameWithRetry(temp, path);
-    });
+    return _write(
+      path,
+      () => _writeTemp(path, (temp) => temp.writeAsBytes(bytes, flush: true)),
+    );
   }
 
   /// 原子复制：把 [sourcePath] 复制到 [destPath]（同目标写入串行化 + 临时文件 rename）。
@@ -64,15 +54,40 @@ class AtomicFile {
   /// G-21：备份 `.bak` 此前用 `file.copy` 直接覆盖，中途掉电/进程被杀会留下**截断的
   /// .bak**；下次主文件损坏时它解析失败，等于丢掉最后一份可用备份。
   static Future<void> copyAtomic(String sourcePath, String destPath) {
-    return _write(destPath, () async {
-      await _ensureParent(destPath);
-      final temp = File(
-        '$destPath.${DateTime.now().microsecondsSinceEpoch}'
-        '${DateTime.now().microsecond}.tmp',
-      );
-      await File(sourcePath).copy(temp.path);
-      await _renameWithRetry(temp, destPath);
-    });
+    return _write(
+      destPath,
+      () => _writeTemp(
+        destPath,
+        (temp) => File(sourcePath).copy(temp.path),
+      ),
+    );
+  }
+
+  /// 在目标同目录下写临时文件并 rename 覆盖目标。
+  ///
+  /// 审计 A-22：此前只有 rename 阶段（且只对 [FileSystemException]）会清理临时文件，
+  /// 写入/复制阶段抛错（磁盘满、权限不足、源文件被删）会把 `*.tmp` 永久留在数据目录。
+  /// 这里把清理范围扩大到整个"写临时文件 → rename"流程，且任何异常都上抛。
+  static Future<void> _writeTemp(
+    String path,
+    Future<void> Function(File temp) writeBody,
+  ) async {
+    await _ensureParent(path);
+    final temp = File(
+      '$path.${DateTime.now().microsecondsSinceEpoch}'
+      '${DateTime.now().microsecond}.tmp',
+    );
+    try {
+      await writeBody(temp);
+      await _renameWithRetry(temp, path);
+    } on Object {
+      try {
+        if (await temp.exists()) await temp.delete();
+      } on Object catch (_) {
+        // 清理失败不掩盖原始异常。
+      }
+      rethrow;
+    }
   }
 
   /// 目标目录不存在时先建：目录被清理/首次运行/路径切换后，
