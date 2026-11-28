@@ -3,7 +3,7 @@
 更新时间：2026-11-28
 当前状态：V5.0.1 已发布（2026-11-22），版本 5.0.1+186；2026-11-28 起在 `main` 上合入 P0 与 P1–P3 核心项修复（未发新版本，剩余项见文末）。
 支持边界：V5 只支持 V4.14.1 写出的 LRX3 数据；V4.13 及更早的 LRX2、旧目录、旧日志、旧备份、旧密码、旧包全部不支持。旧格式只做“识别并明确拒绝”，不迁移、不隔离、不生成空库。
-验证基线：全量 779 通过（2026-11-28 `flutter test`）；`flutter analyze` 通过；`check_rules` 69/69、`ui_copy_check`、`check_version`、`stamp_version` 通过。
+验证基线：全量 780 通过（2026-11-28 `flutter test`）；`flutter analyze` 通过；`check_rules` 69/69、`ui_copy_check`、`check_version`、`stamp_version` 通过。
 本次改动（2026-11-28，P0 与 P1–P3 核心项）：
 1. `lib/utils/today_boundary.dart` 统一归属日计算；`DayRolloverTracker` 按归属日刷新，修复过零点今日面板/角标/悬浮球不刷新；记录/考勤对话框提交时校准未手改的自动默认值。
 2. 安装器覆盖升级删除旧 `migrate_lrx2.exe` 与快捷方式；`performExitBackup` 把退出备份失败写入错误日志；旧 LRX2 锁定文件改名 `.lrx2_legacy` 并提示。
@@ -18,4 +18,4 @@
 - `.gitattributes`：bat CRLF，其余 LF；提交前查 `git diff --check`。
 - 发布前确认 `release_report_v5.0.1.md` 通过、tag/HEAD/Release target 一致、`.sig` 可验；安装包内无 `migrate_lrx2.exe`/旧钥。
 - GitHub 旧 commit 仍可能按 SHA 访问，需 GitHub Support 清理。
-- 尚未处理：关机 `WM_QUERYENDSESSION` 同步写盘、悬浮球 5 档不透明度/逐帧重绘、check_rules 缺失的架构/提交规则等；均已在 P1–P3 清单登记。默认密码固定哈希仍内置，但 Release 首次启动会提示修改。
+- 尚未处理：关机 `WM_QUERYENDSESSION` 同步写盘、悬浮球 5 档不透明度/逐帧重绘、check_rules 的提交/版本等其余规则等；均已在 P1–P3 清单登记。默认密码固定哈希仍内置，但 Release 首次启动会提示修改；`services` 已禁止反向依赖 `providers`。
