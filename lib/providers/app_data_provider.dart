@@ -24,6 +24,7 @@ import '../models/identity.dart';
 import '../models/attendance_record.dart';
 import '../models/reason_library.dart';
 import '../models/password_policy.dart';
+import '../models/undo_result.dart';
 import '../services/app_data_reader.dart';
 import '../services/auth_service.dart';
 import '../services/operation_log_service.dart';
@@ -695,7 +696,7 @@ abstract class _ProviderBase extends ChangeNotifier {
 
   /// 旧版本批量追加在同一毫秒内会生成相同 ID。
   /// 启动时为重复 ID 的后续记录重新分配唯一 ID 并落盘（记录与考勤一并修复）。
-  void _repairDuplicateIds() {
+  void _repairDuplicateIds({bool persist = true}) {
     final seen = <String>{};
     var changed = false;
     // P2-8 修复：记录 ID 变更时同步记录映射表，考勤的 syncedRecordId 一并回写，
@@ -768,7 +769,9 @@ abstract class _ProviderBase extends ChangeNotifier {
         }
       }
     }
-    if (changed) {
+    if (changed && persist) {
+      // 审计 A-07：整包还原路径传 persist: false —— 由调用方统一走一次
+      // saveNow()，避免"这里先写一次、外面再写一次"导致回滚后磁盘已是新数据。
       _save();
     }
   }
@@ -1350,7 +1353,13 @@ abstract class _ProviderBase extends ChangeNotifier {
 
   /// 记录 → 考勤：新增的批评记录带了同步原因时登记考勤，并建立关联，
   /// 避免"考勤同步"再生成一条重复记录。
-  void _syncRecordToAttendance(StudentRecord record) {
+  void _syncRecordToAttendance(
+    StudentRecord record, {
+    // 审计 A-06：撤销“删除记录”时必须把该记录派生过的考勤重新接管回来。
+    // 删除记录时手工考勤会被解绑（看起来像人工登记），若这里不放行覆盖，
+    // 撤销后记录回来了、考勤却永久停在手工行上，两侧关联静默丢失。
+    bool overwriteManualAttendance = false,
+  }) {
     if (!AttendanceFeature.enabled) return;
     if (record.operationType != '批评') return;
     final date = record.date;
@@ -1375,6 +1384,7 @@ abstract class _ProviderBase extends ChangeNotifier {
       // P2-16：撤销删除记录重建派生考勤时沿用源记录的登记时间，
       // 不重新取当前时间（避免"撤销后时间变了"的误导）。
       timestamp: record.timestamp.isEmpty ? null : record.timestamp,
+      overwriteManualAttendance: overwriteManualAttendance,
     );
   }
 

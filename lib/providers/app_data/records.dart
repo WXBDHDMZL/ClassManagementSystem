@@ -66,10 +66,18 @@ class _RecordUndo {
 mixin _RecordsDomain on _ProviderBase {
   /// 记录入库后的副作用：记录最近使用的操作类型、按映射登记考勤。
   /// addRecord 与批量写入**共用**，保证两条路径行为一致。
-  void _applyRecordSideEffects(StudentRecord record) {
+  void _applyRecordSideEffects(
+    StudentRecord record, {
+    bool overwriteManualAttendance = false,
+  }) {
     rememberOperationType(record.operationType);
     // 记录派生考勤属于内部派生写入：即使记录密码开启也不应再次要求密码。
-    _runInternalWrite(() => _syncRecordToAttendance(record));
+    _runInternalWrite(
+      () => _syncRecordToAttendance(
+        record,
+        overwriteManualAttendance: overwriteManualAttendance,
+      ),
+    );
   }
 
   StudentRecord? addRecord(
@@ -391,12 +399,18 @@ mixin _RecordsDomain on _ProviderBase {
     return added;
   }
 
-  /// 撤销最近一次记录变更（新增/修改/删除）。返回实际撤销条数；0 表示没有
-  /// 可撤销的操作、已过期，或目标记录已被修改/删除。
-  int undoLastRecordChange() {
-    if (_blockedByStartup()) return 0;
+  /// 撤销最近一次记录变更（新增/修改/删除）。
+  ///
+  /// 返回 [UndoResult]：`changed` 是实际撤销条数（0 表示没有可撤销的操作、
+  /// 已过期，或目标记录已被修改/删除）；`saved` 表示撤销后的数据是否已落盘。
+  ///
+  /// 审计 A-18b：此前撤销只改内存就立刻返回，`_save()` 的结果没人看，界面
+  /// 一律提示“已撤销本次记录”——写盘失败时磁盘仍是撤销前的数据，重启就回到
+  /// 撤销前，用户却以为撤销成功了。现在撤销会 await 一次真实落盘并如实回报。
+  Future<UndoResult> undoLastRecordChange() async {
+    if (_blockedByStartup()) return UndoResult.none;
     final undo = _lastRecordUndo;
-    if (undo == null) return 0;
+    if (undo == null) return UndoResult.none;
     _lastRecordUndo = null;
 
     var changed = 0;
@@ -459,7 +473,13 @@ mixin _RecordsDomain on _ProviderBase {
                 ? records.length
                 : (entry.index > records.length ? records.length : entry.index);
             records.insert(insertIndex, entry.record);
-            _applyRecordSideEffects(entry.record);
+            // 审计 A-06：删除记录时，它派生过的考勤要么被删、要么被解绑成
+            // “人工登记”。撤销删除必须把这一格重新接管回来（overwrite），
+            // 否则记录回来了、考勤却永久停在人工行上，两侧关联静默丢失。
+            _applyRecordSideEffects(
+              entry.record,
+              overwriteManualAttendance: true,
+            );
             _log(
               '撤销删除记录',
               '${entry.date} · ${entry.record.studentName} · '
@@ -474,6 +494,10 @@ mixin _RecordsDomain on _ProviderBase {
       // 否则 _batch 结束时没有待保存标记，界面不会收到 notifyListeners。
       if (changed > 0) _save();
     });
-    return changed;
+    if (changed == 0) return UndoResult.none;
+    // 审计 A-18b：_batch 结束时那次 _save() 只是入队；这里 await 到真正写盘，
+    // 并把结果如实返回给界面（失败时磁盘仍是撤销前的数据）。
+    final saved = await saveNow();
+    return UndoResult(changed: changed, saved: saved);
   }
 }

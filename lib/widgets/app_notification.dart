@@ -15,6 +15,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../constants/app_theme.dart';
+import '../models/undo_result.dart';
 
 /// 通知类型。颜色只在 [AppNotificationHost] 内集中映射。
 enum AppNoticeKind { info, success, warning, error }
@@ -518,12 +519,16 @@ AppNoticeHandle showTopSnackBar(
 
 /// 带“撤销”按钮的成功提示。
 ///
-/// [onUndo] 返回实际撤销的条数；0 表示已过期或目标已被修改。撤销按钮只保留
-/// 最近一次操作，提示与普通提示一样在 2500 毫秒后自动消失。
+/// [onUndo] 返回撤销结果（内存撤销条数 + 是否已落盘）；`changed` 为 0 表示
+/// 已过期或目标已被修改。撤销按钮只保留最近一次操作，提示与普通提示一样在
+/// 2500 毫秒后自动消失。
+///
+/// 审计 A-18b：[onUndo] 是异步的 —— 撤销必须等到写盘结果才知道能不能说
+/// “已撤销”，否则写盘失败也会提示成功。
 AppNoticeHandle showUndoTopSnackBar(
   BuildContext context,
   String message, {
-  required int Function() onUndo,
+  required Future<UndoResult> Function() onUndo,
 }) {
   final controller = AppNotificationScope.maybeOf(context);
   if (controller == null) {
@@ -537,11 +542,18 @@ AppNoticeHandle showUndoTopSnackBar(
     duration: const Duration(milliseconds: 2500),
     action: AppNoticeAction(
       label: '撤销',
-      onPressed: () {
-        final removed = onUndo();
+      onPressed: () async {
+        final result = await onUndo();
+        final message = !result.hasChanges
+            ? '撤销失败：操作已过期或记录已被修改'
+            : (result.saved
+                  ? '已撤销本次记录'
+                  : '已撤销本次记录，但保存失败：磁盘仍是撤销前的数据，请检查磁盘空间或文件权限');
         controller.show(
-          removed > 0 ? '已撤销本次记录' : '撤销失败：操作已过期或记录已被修改',
-          kind: removed > 0 ? AppNoticeKind.success : AppNoticeKind.error,
+          message,
+          kind: result.hasChanges && result.saved
+              ? AppNoticeKind.success
+              : AppNoticeKind.error,
           duration: const Duration(milliseconds: 2500),
         );
       },

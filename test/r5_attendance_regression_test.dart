@@ -156,7 +156,7 @@ void main() {
   });
 
   group('P2-16 撤销删除记录沿用源记录登记时间', () {
-    test('撤销删除后重建的派生考勤保留原 timestamp', () {
+    test('撤销删除后重建的派生考勤保留原 timestamp', () async {
       final provider = newProvider();
 
       provider.addRecord('张三', '批评', const ['迟到'], 'class', '', date: date);
@@ -168,7 +168,7 @@ void main() {
       provider.deleteRecord(record.id, date: date);
       expect(provider.getAttendanceOf('张三', date, periodKey: 'class'), isNull);
 
-      provider.undoLastRecordChange();
+      await provider.undoLastRecordChange();
 
       final restored =
           provider.getAttendanceOf('张三', date, periodKey: 'class');

@@ -127,7 +127,7 @@ void main() {
   });
 
   group('P2-9 学生改名后撤销快照作废', () {
-    test('改名后撤销不再把旧姓名写回', () {
+    test('改名后撤销不再把旧姓名写回', () async {
       final provider = newProvider();
 
       provider.addRecord('张三', '表扬', const ['认真'], 'class', '', date: date);
@@ -138,7 +138,7 @@ void main() {
       final renamed = provider.getRecordsForDate(date).single;
       expect(renamed.studentName, '张三丰');
 
-      final undone = provider.undoLastRecordChange();
+      final undone = (await provider.undoLastRecordChange()).changed;
       expect(undone, 0, reason: '改名后撤销快照必须作废，否则旧姓名记录被写回');
 
       final after = provider.getRecordsForDate(date).single;

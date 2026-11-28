@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:class_management_system/models/undo_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:class_management_system/constants/app_theme.dart';
@@ -192,9 +193,9 @@ void main() {
     showUndoTopSnackBar(
       hostContext,
       '已记录：张三 · 表扬',
-      onUndo: () {
+      onUndo: () async {
         undoCount++;
-        return 1;
+        return const UndoResult(changed: 1, saved: true);
       },
     );
     await tester.pump();
@@ -205,6 +206,82 @@ void main() {
     expect(undoCount, 1);
     expect(find.text('已撤销本次记录'), findsOneWidget);
     expect(find.text('撤销'), findsNothing);
+
+    controller.dismissAll();
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
+
+  // 审计 A-18b：撤销结果要分三种如实报告，不能一律显示"已撤销"。
+  testWidgets('撤销落盘失败时明确告知磁盘仍是旧数据', (tester) async {
+    final controller = AppNoticeController();
+    late BuildContext hostContext;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        builder: (context, child) => AppNotificationScope(
+          controller: controller,
+          child: AppNotificationHost(child: child ?? const SizedBox.shrink()),
+        ),
+        home: Builder(
+          builder: (context) {
+            hostContext = context;
+            return const Scaffold(body: SizedBox());
+          },
+        ),
+      ),
+    );
+
+    showUndoTopSnackBar(
+      hostContext,
+      '已记录：张三 · 表扬',
+      onUndo: () async => const UndoResult(changed: 1, saved: false),
+    );
+    await tester.pump();
+    await tester.tap(find.text('撤销'));
+    await tester.pump();
+
+    expect(find.text('已撤销本次记录'), findsNothing,
+        reason: '磁盘没写成时不得显示成功');
+    expect(
+      find.text('已撤销本次记录，但保存失败：磁盘仍是撤销前的数据，请检查磁盘空间或文件权限'),
+      findsOneWidget,
+    );
+
+    controller.dismissAll();
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
+
+  testWidgets('撤销已过期时告知失败而不是假装成功', (tester) async {
+    final controller = AppNoticeController();
+    late BuildContext hostContext;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        builder: (context, child) => AppNotificationScope(
+          controller: controller,
+          child: AppNotificationHost(child: child ?? const SizedBox.shrink()),
+        ),
+        home: Builder(
+          builder: (context) {
+            hostContext = context;
+            return const Scaffold(body: SizedBox());
+          },
+        ),
+      ),
+    );
+
+    showUndoTopSnackBar(
+      hostContext,
+      '已记录：张三 · 表扬',
+      onUndo: () async => UndoResult.none,
+    );
+    await tester.pump();
+    await tester.tap(find.text('撤销'));
+    await tester.pump();
+
+    expect(find.text('撤销失败：操作已过期或记录已被修改'), findsOneWidget);
 
     controller.dismissAll();
     await tester.pumpWidget(const SizedBox());

@@ -163,6 +163,13 @@ mixin _ImportRestoreDomain on _ProviderBase {
         if (generatedAttendance > 0) '补登考勤 $generatedAttendance 条',
       ].join('，'),
     );
+    // 审计 A-05：导入成功后必须清掉撤销快照。此前导入不改 `_lastRecordUndo`，
+    // 于是“导入 → 点撤销”撤销的是导入之前那一次新增/删除（若那次是删除，
+    // 撤销还会把它的派生考勤重建回来），用户看到的是“撤销成功了，但撤销的
+    // 不是导入”。导入本身不可撤销，这里只把快照作废。
+    if (createdRecords.isNotEmpty) {
+      _lastRecordUndo = null;
+    }
     _save();
     // 返回**实际写入**条数（跳过非法/空日期、非法类型后提示不虚高）。
     return records.length - skippedTotal;
@@ -639,7 +646,8 @@ mixin _ImportRestoreDomain on _ProviderBase {
     applyCustomPeriods(settings.periods);
     _resetAccessStateAfterDataChange();
     _syncIdentitySession();
-    _repairDuplicateIds();
+    // 审计 A-07：这里不能顺带写盘 —— 写盘统一交给下面的 saveNow()。
+    _repairDuplicateIds(persist: false);
     final writtenRecords = recordsByDate.values.fold<int>(
       0,
       (sum, list) => sum + list.length,
@@ -660,13 +668,19 @@ mixin _ImportRestoreDomain on _ProviderBase {
           '${data.discardedRecordCount > 0 ? ' · 包内 ${data.discardedRecordCount} 条记录因姓名/日期缺失被忽略' : ''}'
           '${data.discardedAttendanceCount > 0 ? ' · 包内 ${data.discardedAttendanceCount} 条考勤因姓名/日期缺失或损坏被忽略' : ''}',
     );
-    // 修复（审查 三-2）：通知统一交给 _save()，不再额外同步通知。
-    _save();
-    // 审计 P2-33：等待真正落盘；失败则回滚内存与全局时段表，返回 -1 供
-    // 界面提示。此前只提示“保存失败”，内存里却已经是包内数据，重启即回退。
-    // 尚未 initialize 的测试替身没有可写盘状态（_isLoading=true），跳过严格
-    // 落盘校验；生产路径一定在 initialize 完成后调用。
-    final saved = isLoading ? true : await saveNow();
+    // 审计 A-07：此前先 `_save()` 再 `await saveNow()`，等于同一份包内数据
+    // 写两次盘。第一次若已写进主文件、第二次失败，回滚内存后磁盘仍是包内
+    // 数据，重启就"变回"被还原的数据，与界面提示矛盾。现在只写一次：
+    // - 未 initialize 的测试替身（_isLoading）没有可写盘状态，只走 _save()
+    //   把界面通知发出去；
+    // - 生产路径只走 saveNow()（内部会先 _save() 通知界面，再等落盘）。
+    final bool saved;
+    if (isLoading) {
+      _save();
+      saved = true;
+    } else {
+      saved = await saveNow();
+    }
     if (!saved) {
       _appData = previousAppData;
       applyCustomPeriods(previousAppData.settings.periods);
