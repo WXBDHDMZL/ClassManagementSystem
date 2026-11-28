@@ -28,18 +28,11 @@ constexpr UINT kMenuTodayRecords = 40005;
 constexpr UINT kMenuHistory = 40006;
 constexpr UINT kMenuStatistics = 40007;
 constexpr UINT kMenuSettings = 40008;
-constexpr UINT kMenuOpacity35 = 40009;
-constexpr UINT kMenuOpacity50 = 40010;
-constexpr UINT kMenuOpacity70 = 40011;
-constexpr UINT kMenuOpacity88 = 40012;
-constexpr UINT kMenuOpacity100 = 40013;
-constexpr UINT kMenuHideToTray = 40014;
-constexpr UINT kMenuExit = 40015;
-constexpr UINT kMenuTogglePositionLock = 40016;
-
-bool NearlyEqual(double left, double right) {
-  return std::abs(left - right) < 0.005;
-}
+constexpr UINT kMenuOpacityBase = 40009;
+constexpr int kMenuOpacityCount = 14;
+constexpr UINT kMenuHideToTray = 40023;
+constexpr UINT kMenuExit = 40024;
+constexpr UINT kMenuTogglePositionLock = 40025;
 
 }  // namespace
 
@@ -198,23 +191,21 @@ void BallWindow::ShowContextMenu(HWND window) {
   AppendMenuW(today_menu, MF_STRING, kMenuHistory, L"历史记录…");
   AppendMenuW(today_menu, MF_STRING, kMenuStatistics, L"数据统计…");
 
-  AppendMenuW(opacity_menu, MF_STRING, kMenuOpacity35, L"35%");
-  AppendMenuW(opacity_menu, MF_STRING, kMenuOpacity50, L"50%");
-  AppendMenuW(opacity_menu, MF_STRING, kMenuOpacity70, L"70%");
-  AppendMenuW(opacity_menu, MF_STRING, kMenuOpacity88, L"88%");
-  AppendMenuW(opacity_menu, MF_STRING, kMenuOpacity100, L"100%");
-  UINT checked_opacity = kMenuOpacity88;
-  if (NearlyEqual(menu_state_.opacity, 0.35)) {
-    checked_opacity = kMenuOpacity35;
-  } else if (NearlyEqual(menu_state_.opacity, 0.50)) {
-    checked_opacity = kMenuOpacity50;
-  } else if (NearlyEqual(menu_state_.opacity, 0.70)) {
-    checked_opacity = kMenuOpacity70;
-  } else if (NearlyEqual(menu_state_.opacity, 1.0)) {
-    checked_opacity = kMenuOpacity100;
+  for (int index = 0; index < kMenuOpacityCount; ++index) {
+    const int percent = 35 + index * 5;
+    AppendMenuW(opacity_menu, MF_STRING, kMenuOpacityBase + index,
+                (std::to_wstring(percent) + L"%").c_str());
   }
-  CheckMenuRadioItem(opacity_menu, kMenuOpacity35, kMenuOpacity100,
-                     checked_opacity, MF_BYCOMMAND);
+  int checked_index = static_cast<int>(
+      std::lround((menu_state_.opacity * 100.0 - 35.0) / 5.0));
+  if (checked_index < 0) checked_index = 0;
+  if (checked_index >= kMenuOpacityCount) {
+    checked_index = kMenuOpacityCount - 1;
+  }
+  const UINT checked_opacity = kMenuOpacityBase + checked_index;
+  CheckMenuRadioItem(opacity_menu, kMenuOpacityBase,
+                     kMenuOpacityBase + kMenuOpacityCount - 1, checked_opacity,
+                     MF_BYCOMMAND);
 
   AppendMenuW(ball_menu, MF_POPUP,
               reinterpret_cast<UINT_PTR>(opacity_menu), L"不透明度");
@@ -275,21 +266,6 @@ void BallWindow::ShowContextMenu(HWND window) {
     case kMenuSettings:
       menu_command = BallMenuCommand::kSettings;
       break;
-    case kMenuOpacity35:
-      menu_command = BallMenuCommand::kOpacity35;
-      break;
-    case kMenuOpacity50:
-      menu_command = BallMenuCommand::kOpacity50;
-      break;
-    case kMenuOpacity70:
-      menu_command = BallMenuCommand::kOpacity70;
-      break;
-    case kMenuOpacity88:
-      menu_command = BallMenuCommand::kOpacity88;
-      break;
-    case kMenuOpacity100:
-      menu_command = BallMenuCommand::kOpacity100;
-      break;
     case kMenuHideToTray:
       menu_command = BallMenuCommand::kHideToTray;
       break;
@@ -300,6 +276,13 @@ void BallWindow::ShowContextMenu(HWND window) {
       menu_command = BallMenuCommand::kTogglePositionLock;
       break;
     default:
+      if (command >= kMenuOpacityBase &&
+          command < kMenuOpacityBase + kMenuOpacityCount) {
+        menu_command = static_cast<BallMenuCommand>(
+            static_cast<int>(BallMenuCommand::kOpacityBase) +
+            static_cast<int>(command - kMenuOpacityBase));
+        break;
+      }
       return;
   }
   if (on_menu_command) {

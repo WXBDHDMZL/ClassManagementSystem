@@ -317,31 +317,6 @@ bool FlutterWindow::OnCreate() {
         case BallWindow::BallMenuCommand::kSettings:
           action = "settings";
           break;
-        case BallWindow::BallMenuCommand::kOpacity35:
-          action = "setOpacity";
-          value = 0.35;
-          has_value = true;
-          break;
-        case BallWindow::BallMenuCommand::kOpacity50:
-          action = "setOpacity";
-          value = 0.50;
-          has_value = true;
-          break;
-        case BallWindow::BallMenuCommand::kOpacity70:
-          action = "setOpacity";
-          value = 0.70;
-          has_value = true;
-          break;
-        case BallWindow::BallMenuCommand::kOpacity88:
-          action = "setOpacity";
-          value = 0.88;
-          has_value = true;
-          break;
-        case BallWindow::BallMenuCommand::kOpacity100:
-          action = "setOpacity";
-          value = 1.0;
-          has_value = true;
-          break;
         case BallWindow::BallMenuCommand::kHideToTray:
           action = "hideToTray";
           break;
@@ -351,6 +326,18 @@ bool FlutterWindow::OnCreate() {
         case BallWindow::BallMenuCommand::kTogglePositionLock:
           action = "togglePositionLock";
           break;
+        default: {
+          const int opacity_index =
+              static_cast<int>(command) -
+              static_cast<int>(BallWindow::BallMenuCommand::kOpacityBase);
+          if (opacity_index < 0 || opacity_index > 13) {
+            return;
+          }
+          action = "setOpacity";
+          value = 0.35 + opacity_index * 0.05;
+          has_value = true;
+          break;
+        }
       }
       flutter::EncodableMap arguments = {
           {flutter::EncodableValue("action"), flutter::EncodableValue(action)}};
