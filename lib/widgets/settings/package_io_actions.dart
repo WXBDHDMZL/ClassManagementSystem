@@ -93,6 +93,10 @@ Future<void> _importPackage(
   final PackageData? data;
   try {
     data = TransferService.parsePackageBytes(bytes);
+  } on ImportLimitException catch (e) {
+    if (!context.mounted) return;
+    showTopSnackBar(context, e.message, isError: true);
+    return;
   } on FormatException {
     if (!context.mounted) return;
     showTopSnackBar(

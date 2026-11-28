@@ -18,6 +18,7 @@ import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
 import '../utils/student_name.dart';
+import 'import_limits.dart';
 import 'transfer_service.dart';
 import 'xlsx_reader.dart';
 
@@ -100,6 +101,10 @@ class StudentImportService {
     final lower = fileName.toLowerCase();
     final extension = lower.contains('.') ? lower.split('.').last : '';
     try {
+      // 审计 A-08：先按字节数挡掉超大文件（解压放大在
+      // _parseDocxRows / readRows 里挡）。放在 try 内，超限才会走下面的
+      // `on FormatException` 变成预览里的可读错误，而不是抛到界面上。
+      ImportLimits.ensureFileBytes(bytes.length);
       switch (extension) {
         case 'txt':
           return _fromTextBytes(bytes);
@@ -200,6 +205,8 @@ class StudentImportService {
     if (rows.isEmpty) {
       return StudentImportPreview(source: source, error: '文件里没有内容');
     }
+    // 审计 A-08：名单不会有一万行以上；超限宁可报错也不静默只读前 N 行。
+    ImportLimits.ensureRowCount(rows.length);
 
     var headerRow = -1;
     var nameColumn = 0;
@@ -347,6 +354,7 @@ class StudentImportService {
 
   /// 从 Word 的 `word/document.xml` 提取段落与表格行。
   static List<List<String>> _parseDocxRows(List<int> bytes) {
+    ImportLimits.ensureZipPayload(bytes, what: 'Word 文件');
     final archive = ZipDecoder().decodeBytes(bytes, verify: false);
     final entry = archive.findFile('word/document.xml');
     if (entry == null) {

@@ -46,6 +46,7 @@ import '../services/auth_service.dart';
 import '../services/desktop_service.dart';
 import '../services/error_log_service.dart';
 import '../services/github_update_service.dart';
+import '../services/import_limits.dart';
 import '../services/import_service.dart';
 import '../services/local_storage_paths.dart';
 import '../services/log_file_service.dart';

@@ -22,6 +22,7 @@ import '../models/app_settings.dart';
 import '../models/attendance_record.dart';
 import '../models/reason_library.dart';
 import '../models/student_record.dart';
+import 'import_limits.dart';
 import 'import_service.dart';
 import 'excel_export.dart';
 import 'xlsx_reader.dart';
@@ -111,6 +112,8 @@ class TransferService {
     if (isCsv) {
       return ImportService.parseCsvRows(decodeCsv(bytes));
     }
+    // 审计 A-08：Excel 走 excel 包时也要先确认容器没被放大过。
+    ImportLimits.ensureZipPayload(bytes, what: '表格文件');
     late List<List<List<String>>> sheets;
     try {
       final workbook = excel.Excel.decodeBytes(bytes);
@@ -1009,6 +1012,8 @@ class TransferService {
   /// 静默替换为 � 后照常入库（姓名等全部变坏），属"宁可报错也不能入库
   /// 坏数据"场景（与记录表格导入同口径）。
   static PackageData? parsePackageBytes(List<int> bytes) {
+    // 审计 A-08：数据包此前无任何体积上限（整份 JSON 读进内存）。
+    ImportLimits.ensureFileBytes(bytes.length, what: '数据包');
     return parsePackage(utf8.decode(bytes));
   }
 }

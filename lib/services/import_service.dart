@@ -20,6 +20,7 @@ import '../utils/app_date.dart';
 import '../utils/record_text.dart';
 import '../utils/student_name.dart';
 import 'statistics_service.dart';
+import 'import_limits.dart';
 import 'xlsx_reader.dart';
 
 /// 导入预览结果：可导入的记录 + 供用户确认的统计信息。
@@ -92,6 +93,8 @@ class ImportService {
     List<Map<String, String>>? periods,
   }) {
     try {
+      // 审计 A-08：字节上限 + 行数上限，超限直接给可读错误，不静默截断。
+      ImportLimits.ensureFileBytes(bytes.length, what: '表格文件');
       late List<List<List<String>>> sheets;
       try {
         final workbook = excel.Excel.decodeBytes(bytes);
@@ -109,6 +112,7 @@ class ImportService {
       }
       for (final rows in sheets) {
         if (_findHeaderRow(rows) == null) continue;
+        ImportLimits.ensureRowCount(rows.length);
         return _buildFromRows(rows, existing, periods);
       }
       return _failure('表格里没找到记录表头（需要包含"学生姓名""操作项目"等列）');
@@ -125,6 +129,7 @@ class ImportService {
   }) {
     try {
       final rows = _parseCsv(text);
+      ImportLimits.ensureRowCount(rows.length, what: 'CSV 文件');
       if (_findHeaderRow(rows) == null) {
         return _failure('表格里没找到记录表头（需要包含"学生姓名""操作项目"等列）');
       }

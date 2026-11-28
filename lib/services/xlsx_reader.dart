@@ -16,6 +16,8 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
+import 'import_limits.dart';
+
 /// 直接读取 .xlsx 的最小实现，绕过 excel 包对关系目标路径的假设。
 ///
 /// 主要用于 openpyxl / WPS 等把关系目标写成绝对路径（/xl/worksheets/...）
@@ -26,6 +28,8 @@ class XlsxReader {
   /// 兼容 openpyxl / WPS 等写出的绝对路径关系（`/xl/worksheets/...`），
   /// `excel` 包按相对路径拼会找不到工作表。
   static List<List<String>> readRows(List<int> bytes) {
+    // 审计 A-08：zip 炸弹/超大表在这里挡住，别等解压完才发现内存不够。
+    ImportLimits.ensureZipPayload(bytes, what: '表格文件');
     final archive = ZipDecoder().decodeBytes(bytes, verify: false);
 
     final workbookEntry = archive.findFile('xl/workbook.xml');
