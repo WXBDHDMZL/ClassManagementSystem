@@ -253,6 +253,9 @@ def request(
             return error.code, json.loads(body)
         except json.JSONDecodeError:
             return error.code, body
+    except urllib.error.URLError as error:
+        # 网络层失败（DNS/超时/TLS）不抛栈；调用方按非 2xx 走统一失败路径。
+        return 0, f"网络错误：{error.reason}"
 
 
 def system_credential() -> str:

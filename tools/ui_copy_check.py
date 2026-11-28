@@ -33,6 +33,7 @@ def load_rules():
         list(data.get("forbidden", [])),
         list(data.get("allowed", [])),
         list(data.get("gated_features", [])),
+        set(data.get("exempt_files", [])),
     )
 
 
@@ -141,7 +142,7 @@ def extract_literals(source):
 
 
 def scan():
-    forbidden, allowed, gated = load_rules()
+    forbidden, allowed, gated, exempt_files = load_rules()
     violations = []
     for path in sorted(LIB.rglob("*.dart")):
         try:
@@ -149,6 +150,8 @@ def scan():
         except (OSError, UnicodeDecodeError):
             continue
         rel = path.relative_to(ROOT).as_posix()
+        if rel in exempt_files:
+            continue
         literals = extract_literals(source)
         for start_line, value in literals:
             if any(token in value for token in allowed):

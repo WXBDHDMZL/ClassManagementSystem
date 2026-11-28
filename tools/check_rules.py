@@ -83,6 +83,13 @@ def main():
             baseline = {}
 
     if update:
+        old_catch = baseline.get("bareCatch")
+        if isinstance(old_catch, int) and current["bareCatch"] > old_catch:
+            print(
+                f"[FAIL] 裸 catch 不得上调：当前 {current['bareCatch']} > 基线 {old_catch}",
+                file=sys.stderr,
+            )
+            return 1
         merged = dict(baseline)
         merged.update(current)
         BASELINE.write_text(

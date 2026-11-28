@@ -1,4 +1,4 @@
 {
-  "bareCatch": 72,
+  "bareCatch": 69,
   "note": "裸 catch 只降不升（目标 ≤8，见 BACKLOG B-13）"
 }

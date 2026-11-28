@@ -24,7 +24,7 @@
     "V2.",
     "V3."
   ],
-  "allowed": ["更新日志.txt"],
+  "allowed": [],
   "gated_features": [
     {
       "_comment": "功能未开放时，界面文案不得再提该功能。命中 gated_word 的字面量必须落在含 guard 的窗口内，或带 marker 注释，或属于 exempt_files（结构上已整体隐藏）。",
@@ -32,12 +32,17 @@
       "guard": "AttendanceFeature.enabled",
       "marker": "ui-copy: attendance",
       "window": 20,
-      "scope": ["lib/widgets"],
+      "scope": [
+        "lib/widgets"
+      ],
       "exempt_files": [
         "lib/widgets/attendance_dialog.dart",
         "lib/widgets/settings/attendance_settings_page.dart",
         "lib/widgets/settings_panel.dart"
       ]
     }
+  ],
+  "exempt_files": [
+    "lib/services/update_launcher.dart"
   ]
 }

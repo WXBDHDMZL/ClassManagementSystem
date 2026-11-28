@@ -51,3 +51,7 @@ jobs:
         run: flutter pub get
       - name: Full lane + coverage
         run: python tools/check.py --lane full --coverage
+      - name: Coverage floor
+        # 当前实测约 75% / 84.8%；先设 70% / 80% 的防倒退底线，
+        # 避免“只生成报告、不执行阈值”成为事实上的无门禁。
+        run: python tools/coverage_check.py --min-overall 70 --min-core 80 --enforce

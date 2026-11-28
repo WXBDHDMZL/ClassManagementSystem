@@ -174,6 +174,9 @@ final d = '记录新增、\${true ? '考勤登记' : ''}';
     final allowed = (rules['allowed'] as List).cast<String>();
     final gated = ((rules['gated_features'] as List?) ?? const [])
         .cast<Map<String, dynamic>>();
+    final exemptFiles = ((rules['exempt_files'] as List?) ?? const [])
+        .cast<String>()
+        .toSet();
 
     final violations = <String>[];
     final files =
@@ -185,6 +188,8 @@ final d = '记录新增、\${true ? '考勤登记' : ''}';
           ..sort((a, b) => a.path.compareTo(b.path));
 
     for (final file in files) {
+      final rel = file.path.replaceAll('\\', '/');
+      if (exemptFiles.contains(rel)) continue;
       final source = file.readAsStringSync();
       final literals = _extractLiterals(source);
       for (final literal in literals) {

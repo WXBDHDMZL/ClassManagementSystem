@@ -135,7 +135,7 @@ def main():
         print("\n".join(problems))
         print(f"\n共 {len(problems)} 处问题。")
         sys.exit(1)
-    print("\n[OK] 全部一致（安装包属性/文件名、README、LICENSE、pubspec、lib/ 文件头）")
+    print("\n[OK] 全部一致（安装包属性/文件名、README、LICENSE、pubspec、lib/ 文件头；test 头允许滞后）")
 
 
 if __name__ == "__main__":

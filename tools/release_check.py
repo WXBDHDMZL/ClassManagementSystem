@@ -54,7 +54,7 @@ REPORT_DIR = ROOT / "build"
 
 _PS = ["powershell", "-NoProfile", "-NonInteractive", "-Command"]
 
-CHECKS: list[tuple[str, bool, str]] = []
+CHECKS: list[tuple[str, bool | None, str]] = []
 
 
 # --------------------------------------------------------------------------- #
@@ -69,9 +69,11 @@ def step(index: int, total: int, title: str) -> None:
     say(f"=== [{index}/{total}] {title} " + "=" * max(0, 52 - len(title)))
 
 
-def check(name: str, ok: bool, detail: str = "") -> bool:
+def check(name: str, ok: bool | None, detail: str = "") -> bool | None:
+    """True=通过，False=失败，None=按参数故意跳过（不等同于通过）。"""
     CHECKS.append((name, ok, detail))
-    say(f"  [{'OK' if ok else 'FAIL'}] {name}" + (f"：{detail}" if detail else ""))
+    label = "OK" if ok is True else ("SKIP" if ok is None else "FAIL")
+    say(f"  [{label}] {name}" + (f"：{detail}" if detail else ""))
     return ok
 
 
@@ -553,16 +555,25 @@ def stage_installer(version: str, signing_key: Path | None) -> tuple[bool, Path 
 
 
 def detect_previous_installer(version: str) -> Path | None:
-    """在 installer/output 里找比当前版本低的最近一个安装包，用于覆盖升级演练。"""
+    """找比当前版本低的最近一个安装包，用于覆盖升级演练。
+
+    优先 installer/output（正式安装包目录）；若已被清理，再回退到
+    build/release_v*/ 历史发布目录，避免升级演练因本地资产清理而静默跳过。
+    """
     candidates: list[tuple[tuple[int, ...], Path]] = []
     current = tuple(int(part) for part in version.lstrip("V").split("+")[0].split("."))
-    for path in (ROOT / "installer" / "output").glob("*.exe"):
-        match = re.search(r"_v(\d+(?:\.\d+)+)\.exe$", path.name)
-        if not match:
+    roots = [ROOT / "installer" / "output"]
+    roots.extend(sorted((ROOT / "build").glob("release_v*"), reverse=True))
+    for root in roots:
+        if not root.is_dir():
             continue
-        parts = tuple(int(part) for part in match.group(1).split("."))
-        if parts < current:
-            candidates.append((parts, path))
+        for path in root.glob("*.exe"):
+            match = re.search(r"_v(\d+(?:\.\d+)+)\.exe$", path.name, re.IGNORECASE)
+            if not match:
+                continue
+            parts = tuple(int(part) for part in match.group(1).split("."))
+            if parts < current:
+                candidates.append((parts, path))
     return max(candidates)[1] if candidates else None
 
 
@@ -864,7 +875,7 @@ def stage_uninstall(install_dir: Path, version: str) -> bool:
 
 def write_report(version: str, pubspec_version: str, details: dict) -> Path:
     step(7, 9, "生成验收报告")
-    passed = all(ok for _, ok, _ in CHECKS)
+    passed = all(ok is not False for _, ok, _ in CHECKS)
     lines = [
         f"# 发布验收报告 V{version.lstrip('V')}",
         "",
@@ -877,7 +888,8 @@ def write_report(version: str, pubspec_version: str, details: dict) -> Path:
     ]
     for name, ok, detail in CHECKS:
         safe = str(detail).replace("|", "\\|")
-        lines.append(f"| {name} | {'通过' if ok else '失败'} | {safe} |")
+        status = "通过" if ok is True else ("跳过" if ok is None else "失败")
+        lines.append(f"| {name} | {status} | {safe} |")
 
     lines += ["", "## 真实数据副本", ""]
     if "source_summary" in details:
@@ -993,9 +1005,9 @@ def main() -> int:
 
     upgrade_from = None if args.skip_upgrade else detect_previous_installer(version)
     if args.skip_upgrade:
-        check("覆盖升级演练", True, "SKIP（--skip-upgrade）")
+        check("覆盖升级演练", None, "SKIP（--skip-upgrade）")
     elif upgrade_from is None:
-        check("覆盖升级演练", True, "SKIP：installer/output 没有更旧版本安装包")
+        check("覆盖升级演练", None, "SKIP：未找到更旧版本安装包")
     else:
         say(f"  覆盖升级演练使用：{upgrade_from.name}")
     ok, install_dir, _ = stage_install(asset, version, upgrade_from=upgrade_from)
@@ -1009,16 +1021,18 @@ def main() -> int:
         stage_uninstall(install_dir, version)
         cleanup_sandbox()
     else:
-        check("静默卸载", True, "SKIP（--keep-sandbox）")
-        check("清理沙箱", True, "SKIP（--keep-sandbox）")
+        check("静默卸载", None, "SKIP（--keep-sandbox）")
+        check("清理沙箱", None, "SKIP（--keep-sandbox）")
         say(f"  [KEEP] 沙箱目录保留在 {SANDBOX_ROOT}")
 
     report = write_report(version, pubspec_version, details)
 
-    passed = all(ok for _, ok, _ in CHECKS)
+    passed = all(ok is not False for _, ok, _ in CHECKS)
+    skipped = [name for name, ok, _ in CHECKS if ok is None]
     say("")
     say("=" * 70)
-    say(f"验收结果：{'通过' if passed else '未通过'}（报告：{report}）")
+    skip_suffix = f"；跳过 {len(skipped)} 项：{'、'.join(skipped)}" if skipped else ""
+    say(f"验收结果：{'通过' if passed else '未通过'}（报告：{report}{skip_suffix}）")
     if passed:
         say(f"发布资产：{asset}（同目录下 .sha256 / .sig 可一并上传）")
     say("=" * 70)
