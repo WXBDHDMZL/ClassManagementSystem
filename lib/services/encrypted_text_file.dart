@@ -15,6 +15,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'storage_service.dart';
+import 'atomic_file.dart';
 
 /// 加密文本文件：与主数据文件相同的 LRX3 方案，用于操作日志/错误日志。
 ///
@@ -22,10 +23,17 @@ import 'storage_service.dart';
 /// - 读取时逐行解密；无法解密的行会被跳过；
 /// - 错误日志一个条目本身是多行文本，加密后仍是一行密文。
 class EncryptedTextFileContent {
-  const EncryptedTextFileContent(this.lines, this.skippedLines);
+  const EncryptedTextFileContent(
+    this.lines,
+    this.skippedLines, {
+    this.rawLines = const [],
+  });
 
   final List<String> lines;
   final int skippedLines;
+
+  /// 原始密文行（与 [lines] 不同：包含无法解密的坏行），供安全重写时保留坏行。
+  final List<String> rawLines;
 
   bool get hasUndecodableLines => skippedLines > 0;
 }
@@ -42,6 +50,19 @@ class EncryptedTextFile {
     final trimmed = line.trim();
     if (trimmed.isEmpty) return null;
     return StorageService.decodeLocalText(trimmed);
+  }
+
+  /// 解密单行；无法解密返回 null。供日志清理保留坏行时复用。
+  static String? decodeLine(String line) => _decode(line);
+
+  /// 按原始密文行重写文件；坏行原样保留，不做二次加密。
+  static Future<void> rewriteRawLines(
+    File file,
+    List<String> rawLines,
+  ) async {
+    await file.parent.create(recursive: true);
+    final content = rawLines.isEmpty ? '' : '${rawLines.join('\n')}\n';
+    await AtomicFile.writeString(file.path, content);
   }
 
   /// 追加一条记录。
@@ -68,10 +89,12 @@ class EncryptedTextFile {
     }
     final content = await file.readAsString();
     final result = <String>[];
+    final rawLines = <String>[];
     var skipped = 0;
     for (final raw in content.split('\n')) {
       final line = raw.trimRight();
       if (line.trim().isEmpty) continue;
+      rawLines.add(line);
       final decoded = _decode(line);
       if (decoded != null) {
         result.add(decoded);
@@ -82,7 +105,7 @@ class EncryptedTextFile {
     if (skipped > 0) {
       debugPrint('加密文本有 $skipped 行无法解密，已跳过：${file.path}');
     }
-    return EncryptedTextFileContent(result, skipped);
+    return EncryptedTextFileContent(result, skipped, rawLines: rawLines);
   }
 
   /// 读取整份文本（用于日志导出）。

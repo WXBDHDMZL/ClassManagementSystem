@@ -98,6 +98,35 @@ void main() {
     expect(errors, isEmpty);
   });
 
+  test('pruneBefore 遇到坏行时清理可解密条目并保留坏行', () async {
+    final file = LogFileService.fileIn(dir);
+    await LogFileService.append(
+      file,
+      LogFileService.prefixOperation,
+      '2026-01-01 08:00:00  很旧的操作',
+    );
+    await LogFileService.append(
+      file,
+      LogFileService.prefixOperation,
+      '2026-10-01 08:00:00  新的操作',
+    );
+    await file.writeAsString('not-encrypted-bad-line\n', mode: FileMode.append);
+
+    final removed = await LogFileService.pruneBefore(
+      file,
+      DateTime(2026, 6, 1),
+    );
+
+    expect(removed, 1);
+    final operations = await LogFileService.readEntries(
+      file,
+      LogFileService.prefixOperation,
+    );
+    expect(operations, hasLength(1));
+    expect(operations.single, contains('新的操作'));
+    expect(await file.readAsString(), contains('not-encrypted-bad-line'));
+  });
+
   test('deleteAllLogs 删除合并文件与归档目录', () async {
     final file = LogFileService.fileIn(dir);
     await LogFileService.append(

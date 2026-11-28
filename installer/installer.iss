@@ -26,6 +26,7 @@ AppMutex=ClassManagementSystem.Local.SingleInstance
 CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\班级管理系统.exe
+SetupIconFile=..\assets\icons\tray.ico
 DisableProgramGroupPage=yes
 LicenseFile=LICENSE.txt
 

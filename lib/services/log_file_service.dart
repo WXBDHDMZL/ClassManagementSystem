@@ -100,9 +100,32 @@ class LogFileService {
       if (!await file.exists()) return 0;
       final parsed = await EncryptedTextFile.readLinesDetailed(file);
       if (parsed.hasUndecodableLines) {
-        // 审计 P2-3：整份重写会把无法解密的坏行永久抹掉；宁可跳过本次清理。
-        debugPrint('日志文件有 ${parsed.skippedLines} 行无法解密，已跳过本次清理：${file.path}');
-        return 0;
+        // 审计 P2-3：坏行不能被永久抹掉，但也不能因此让整份日志永不收缩。
+        // 逐行处理：可解密行按截止时间清理，无法解密的坏行原样保留。
+        final keptRaw = <String>[];
+        var removed = 0;
+        for (final raw in parsed.rawLines) {
+          final entry = EncryptedTextFile.decodeLine(raw);
+          if (entry == null) {
+            keptRaw.add(raw);
+            continue;
+          }
+          final entryCategory = _categoryOf(entry);
+          if (category != null && entryCategory != category) {
+            keptRaw.add(raw);
+            continue;
+          }
+          final time = _entryTime(entry);
+          if (time != null && time.isBefore(cutoff)) {
+            removed++;
+            continue;
+          }
+          keptRaw.add(raw);
+        }
+        if (removed > 0) {
+          await _rewriteRaw(file, keptRaw);
+        }
+        return removed;
       }
       final entries = parsed.lines;
       final kept = <String>[];
@@ -319,6 +342,18 @@ class LogFileService {
     } finally {
       // 即使写入失败，也要恢复句柄与 ACL；否则日志文件会处于“无保护”状态，
       // 且后续 append 可能对着已失效的旧句柄写。
+      await _hold(file);
+      await _protect(file);
+    }
+  }
+
+  /// 按原始密文行重写日志；坏行原样保留，不做二次加密。
+  static Future<void> _rewriteRaw(File file, List<String> rawLines) async {
+    await _releaseGuard();
+    await _unprotect(file);
+    try {
+      await EncryptedTextFile.rewriteRawLines(file, rawLines);
+    } finally {
       await _hold(file);
       await _protect(file);
     }
