@@ -37,6 +37,7 @@ import './widgets/statistics_dialog.dart';
 import './widgets/app_notification.dart';
 import './widgets/identity_guard.dart';
 import './widgets/password_action_guard.dart';
+import './widgets/change_password_dialog.dart';
 import './widgets/settings_panel.dart';
 import './widgets/update_prompt_host.dart';
 import './constants/app_theme.dart';
@@ -495,6 +496,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _dayTracker = DayRolloverTracker();
     _scheduleDayCheck();
     DesktopService.instance.onBallMenuAction = _handleBallMenuAction;
+    if (kReleaseMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _promptFactoryPasswordIfNeeded();
+      });
+    }
+  }
+
+  bool _factoryPasswordPrompted = false;
+
+  /// 出厂默认密码是公开在源码里的固定哈希，不能长期作为真实密码使用。
+  /// 首次以 Release 启动时主动要求设置一次管理密码；用户取消则本次不再打扰，
+  /// 但安全设置页仍会持续提示“仍在使用出厂默认密码”。
+  Future<void> _promptFactoryPasswordIfNeeded() async {
+    if (!mounted || _factoryPasswordPrompted) return;
+    final settings =
+        Provider.of<AppDataProvider>(context, listen: false).appData.settings;
+    if (!settings.passwordEnabled || settings.passwordHash.isNotEmpty) return;
+    _factoryPasswordPrompted = true;
+    final changed = await ChangePasswordDialog.show(
+      context,
+      requireCurrent: false,
+    );
+    if (!mounted || changed) return;
+    showTopSnackBar(
+      context,
+      '仍在使用出厂默认密码，请在设置 → 安全设置中修改。',
+      isError: true,
+    );
   }
 
   @override

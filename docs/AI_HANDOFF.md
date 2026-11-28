@@ -18,4 +18,4 @@
 - `.gitattributes`：bat CRLF，其余 LF；提交前查 `git diff --check`。
 - 发布前确认 `release_report_v5.0.1.md` 通过、tag/HEAD/Release target 一致、`.sig` 可验；安装包内无 `migrate_lrx2.exe`/旧钥。
 - GitHub 旧 commit 仍可能按 SHA 访问，需 GitHub Support 清理。
-- 尚未处理：默认密码固定 SHA-256、关机 `WM_QUERYENDSESSION` 同步写盘、悬浮球 5 档不透明度/逐帧重绘、check_rules 缺失的架构/提交规则等；均已在 P1–P3 清单登记。
+- 尚未处理：关机 `WM_QUERYENDSESSION` 同步写盘、悬浮球 5 档不透明度/逐帧重绘、check_rules 缺失的架构/提交规则等；均已在 P1–P3 清单登记。默认密码固定哈希仍内置，但 Release 首次启动会提示修改。
