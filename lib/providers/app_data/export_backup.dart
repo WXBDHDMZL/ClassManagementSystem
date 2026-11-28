@@ -71,6 +71,11 @@ mixin _ExportBackupDomain on _ProviderBase {
         '${twoDigit(now.hour)}${twoDigit(now.minute)}${twoDigit(now.second)}.enc';
   }
 
+  Future<String?> performExitBackup() async {
+    final result = await performBackup();
+    return result.isSuccess ? null : (result.error ?? '备份失败');
+  }
+
   /// 执行一次备份：每次生成一份带时间的备份文件，并自动保留最近 [AppDataProvider.backupKeepCount] 份。
   /// 失败同样会写进操作日志，避免"以为备份了、其实没备份"。
   Future<BackupResult> performBackup({String? password}) async {

@@ -44,6 +44,12 @@ Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; 绝不能生成“安装成功但双击无反应”的安装包（干净 Windows 没有 MSVCP140.dll）。
 Source: "VC_redist.x64.exe"; DestDir: "{tmp}"; Flags: ignoreversion
 
+[InstallDelete]
+; 5.0.1 起不再随包分发旧数据迁移工具；覆盖升级时删除 5.0.0 及更早版本留下的副本。
+Type: files; Name: "{app}\migrate_lrx2.exe"
+; 旧版本开始菜单里的迁移入口也一并清理，避免指向已删除的工具。
+Type: files; Name: "{group}\转换历史加密数据.lnk"
+
 [Icons]
 Name: "{group}\班级管理系统"; Filename: "{app}\班级管理系统.exe"
 Name: "{group}\卸载班级管理系统"; Filename: "{uninstallexe}"

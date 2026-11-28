@@ -700,9 +700,17 @@ class DesktopService with TrayListener, WindowListener {
       // 设置为"每次退出时"备份就顺手备份一次（内部会先落盘再复制）。
       if (_provider?.appData.settings.backupFrequency ==
           BackupFrequency.onExit) {
-        // 审计 S-P1-14：performBackup 内部已把失败写入操作日志；
-        // 接口层不暴露 BackupResult（避免 services→providers 反向依赖）。
-        await _provider?.performBackup();
+        // 审计 S-P1-14：备份失败不能只写操作日志（用户不一定翻日志）；
+        // performExitBackup 返回可直接记录的原因，退出流程继续，不阻断关闭。
+        final backupError = await _provider?.performExitBackup();
+        if (backupError != null) {
+          appendErrorLog(
+            'desktop_service',
+            backupError,
+            StackTrace.current,
+            context: '退出程序：每次退出备份失败',
+          );
+        }
       }
       await _provider?.flushPendingSaves();
       // 准备阶段（备份/落盘）完成，聚焦关窗阶段，防止窗口卡死拖到备份超时误杀。
@@ -1095,6 +1103,7 @@ class DesktopService with TrayListener, WindowListener {
     // 关闭请求可能来自任务栏缩略图上的 ✗：此时主窗口往往处于最小化或被遮挡状态，
     // 确认框会弹在一个看不见的窗口里（看起来就像"点了关闭没反应"）。
     // 先把主窗口恢复、显示并拿到焦点，再弹确认框。悬浮球模式下主窗口本就隐藏，跳过。
+    final wasMinimized = !_ballActive && await windowManager.isMinimized();
     if (!_ballActive) {
       await windowManager.restore();
       await windowManager.show();
@@ -1114,7 +1123,11 @@ class DesktopService with TrayListener, WindowListener {
       _closeDialogShowing = false;
     }
 
-    if (result == null) return; // 取消：窗口保持打开
+    if (result == null) {
+      // 取消关闭时恢复原最小化状态，避免只是点了一下 ✗ 就把窗口弹出来。
+      if (wasMinimized) await windowManager.minimize();
+      return;
+    }
     if (result.remember) {
       provider.setCloseAction(result.action);
     }

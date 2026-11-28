@@ -20,6 +20,7 @@ import 'atomic_file.dart';
 import 'local_storage_paths.dart';
 import 'operation_log_service.dart';
 import 'security_service.dart';
+import 'storage_crypto.dart';
 import 'storage_service.dart';
 import '../utils/app_clock.dart';
 
@@ -65,6 +66,10 @@ class AuthService {
   static bool _stateLoaded = false;
   static bool _persistFailedLogged = false;
 
+  /// 检测到旧版 LRX2 锁定文件时为 true；文件会被原样改名保留并提示，
+  /// 不会静默删除或按“无记录”掩盖。
+  static bool legacyStateUnsupported = false;
+
   /// 测试专用：覆盖状态文件所在目录（避免写真实文档目录）。
   @visibleForTesting
   static Directory? debugStorageDirectory;
@@ -85,6 +90,9 @@ class AuthService {
 
   static Future<void>? _stateLoading;
 
+  /// 启动时主动加载锁定状态，确保旧版锁定文件检测能提示给用户。
+  static Future<void> ensureLoaded() => _loadStateIfNeeded();
+
   static Future<void> _loadStateIfNeeded() {
     if (_stateLoaded) return Future<void>.value();
     // 并发调用共用同一个加载 Future，避免第一个请求尚未读完时
@@ -100,7 +108,21 @@ class AuthService {
       final file = await _stateFile();
       if (file == null || !await file.exists()) return;
       final stored = await file.readAsString();
-      // 5.0 只接受 LRX3 密文；旧 LRX2 锁定状态不再兼容，按“无记录”处理。
+      // 5.0 只接受 LRX3 密文；旧 LRX2 锁定状态不再兼容，也不静默清空：
+      // 原文件改名保留，置提示标记，让用户知道失败次数/锁定时间已失效。
+      try {
+        final bytes = base64Decode(stored.trim());
+        if (StorageCrypto.isV2(bytes)) {
+          legacyStateUnsupported = true;
+          final legacy = File('${file.path}.lrx2_legacy');
+          if (!await legacy.exists()) {
+            await file.rename(legacy.path);
+          }
+          return;
+        }
+      } on FormatException {
+        // 不是 Base64 密文，继续交给 decodeLocalText 处理。
+      }
       final plain = StorageService.decodeLocalText(stored);
       if (plain == null) return;
       final map = jsonDecode(plain);
@@ -337,5 +359,6 @@ class AuthService {
     _stateLoaded = false;
     _stateLoading = null;
     _persistFailedLogged = false;
+    legacyStateUnsupported = false;
   }
 }

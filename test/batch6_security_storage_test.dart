@@ -4,6 +4,7 @@
 //  - B-20 损坏主文件“隔离失败”分支无法稳定复现，保存是否被正确拒绝缺少测试；
 //  - B-23 连续输错后的锁定只在内存，重启即可继续尝试。
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -63,6 +64,25 @@ void main() {
     final saved = await storage.saveData(AppData.empty());
     expect(saved, isFalse, reason: '损坏文件未隔离成功前必须拒绝保存');
     expect(await file.readAsString(), before, reason: '主文件不能被空数据覆盖');
+  });
+
+  test('旧 LRX2 锁定状态不静默清空：改名保留并置提示标记', () async {
+    AuthService.debugStorageDirectory = tempDir;
+    AuthService.resetForTest();
+    final legacy = File('${tempDir.path}/class_management_auth_guard.json');
+    await legacy.writeAsString(
+      base64Encode(<int>[0x4C, 0x52, 0x58, 0x32, ...List<int>.filled(64, 0)]),
+    );
+
+    await AuthService.ensureLoaded();
+
+    expect(AuthService.legacyStateUnsupported, isTrue);
+    expect(await legacy.exists(), isFalse, reason: '旧文件不能继续被当作当前状态');
+    expect(
+      await File('${legacy.path}.lrx2_legacy').exists(),
+      isTrue,
+      reason: '旧文件必须改名保留，不能静默删除',
+    );
   });
 
   test('B-23 连续失败锁定：重启（重置内存）后仍处于锁定期', () async {

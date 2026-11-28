@@ -114,8 +114,9 @@ class MaintenanceSettingsPage extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const SettingsHint(
-          '数据、备份、日志都集中在「文档\\班级管理系统」；'
-          '换机或整体备份时复制这个文件夹即可。',
+          '数据、备份、日志都集中在「文档\\班级管理系统」。'
+          '整机迁移请使用「手动备份」并同时保留 .enc 与 .pkey 文件；'
+          '自动备份只能在本机当前 Windows 用户下恢复。',
         ),
         const SizedBox(height: 22),
         const SettingsSectionTitle('运行日志'),

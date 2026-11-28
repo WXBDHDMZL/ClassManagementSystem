@@ -33,6 +33,12 @@ for %%F in ("%~dp0VC_redist.x64.exe") do if %%~zF LSS 5000000 (
   echo [ERROR] VC_redist.x64.exe looks truncated: %%~zF bytes.
   exit /b 1
 )
+rem 供应链校验：VC++ 运行库必须是 Microsoft 有效签名，不能只看大小。
+powershell -NoProfile -Command "$sig = Get-AuthenticodeSignature -LiteralPath '%~dp0VC_redist.x64.exe'; if ($sig.Status -ne 'Valid') { Write-Host ('[ERROR] VC_redist.x64.exe signature: ' + $sig.Status); exit 1 }"
+if errorlevel 1 (
+  echo [ERROR] VC_redist.x64.exe is not signed by a trusted publisher.
+  exit /b 1
+)
 
 echo Looking for Inno Setup...
 for /f "delims=" %%i in ('where iscc 2^>nul') do (
@@ -76,7 +82,7 @@ if errorlevel 1 (
 rem 审计 S-P1-9/P2-16：为刚生成的安装包写 .sha256，手工打包上传时客户端
 rem 才有校验值可用（缺校验值时客户端会拒绝更新）。
 powershell -NoProfile -Command "$f = Get-ChildItem -LiteralPath 'output' -Filter '*.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($f) { $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower(); Set-Content -LiteralPath ($f.FullName + '.sha256') -Value ($h + '  ' + $f.Name) -Encoding ASCII }"
-rem 2026-10-17: keep only the newest installer in output; delete older installers.
-powershell -NoProfile -Command "$files = Get-ChildItem -LiteralPath 'output' -Filter '*.exe' -File | Sort-Object LastWriteTime -Descending; $files | Select-Object -Skip 1 | Remove-Item -Force"
+rem 2026-10-17: keep only the newest installer in output; delete older installers and their .sha256/.sig.
+powershell -NoProfile -Command "$files = Get-ChildItem -LiteralPath 'output' -Filter '*.exe' -File | Sort-Object LastWriteTime -Descending; if ($files) { $keep = $files[0].Name; $files | Select-Object -Skip 1 | Remove-Item -Force; Get-ChildItem -LiteralPath 'output' -File | Where-Object { ($_.Name -like '*.sha256' -or $_.Name -like '*.sig') -and $_.Name -ne ($keep + '.sha256') -and $_.Name -ne ($keep + '.sig') } | Remove-Item -Force }"
 echo Build completed!
 pause

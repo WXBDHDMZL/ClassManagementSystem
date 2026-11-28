@@ -70,9 +70,10 @@ abstract class AppDataReader implements Listenable {
   void setBallPositionLocked(bool locked);
 
   /// 立即执行一次备份（"每次退出备份"频率下由退出流程调用）。
-  /// 声明为 `Future<void>`：桌面服务不使用返回值 —— 避免接口依赖 provider
-  /// 内部的 BackupResult 类型（那会形成 services → providers 的新反向边）。
-  Future<void> performBackup();
+  /// 返回 null 表示成功；非 null 为可直接写入错误日志的失败原因。
+  /// 用 `String?` 而不是 provider 的 `BackupResult`，避免 services → providers
+  /// 的反向类型依赖。
+  Future<String?> performExitBackup();
 
   /// 等待已排队的写盘任务全部完成（退出前调用，确保数据已落盘）。
   Future<void> flushPendingSaves();
