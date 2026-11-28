@@ -86,8 +86,13 @@ class EncryptedTextFile {
   }
 
   /// 读取整份文本（用于日志导出）。
+  /// 有坏行时在导出内容顶部留一行提示，避免用户以为日志完整。
   static Future<String> readAllText(File file) async {
-    final lines = await readLines(file);
+    final content = await readLinesDetailed(file);
+    final lines = content.lines;
+    if (content.skippedLines > 0) {
+      lines.insert(0, '[导出提示] 有 ${content.skippedLines} 行日志无法解密，已跳过。');
+    }
     return lines.isEmpty ? '' : '${lines.join('\n')}\n';
   }
 }

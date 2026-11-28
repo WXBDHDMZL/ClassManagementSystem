@@ -79,7 +79,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
     final picked = await showDatePicker(
       context: context,
       initialDate: current.isAfter(now) ? now : current,
-      firstDate: DateTime(2000, 1, 1),
+      firstDate: DateTime(1900, 1, 1),
       // 考勤为当天登记或事后补录，不允许登记未来日期。
       lastDate: now,
       helpText: '选择考勤日期',
@@ -897,6 +897,17 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
     List<AttendanceRecord> records,
   ) {
     final statuses = provider.appData.settings.attendanceStatuses;
+    // 组标题取记录里最常见的非空时段名，避免旧数据混合标签时只显示第一条。
+    final labelCounts = <String, int>{};
+    for (final record in records) {
+      final label = record.periodLabel.trim();
+      if (label.isNotEmpty) labelCounts[label] = (labelCounts[label] ?? 0) + 1;
+    }
+    final periodTitle = labelCounts.isEmpty
+        ? records.first.periodLabel
+        : labelCounts.entries
+            .reduce((a, b) => a.value >= b.value ? a : b)
+            .key;
     // 同一时间段内按状态分组展示，方便一眼看出谁请假、谁迟到。
     final byStatus = <String, List<AttendanceRecord>>{};
     for (final record in records) {
@@ -917,7 +928,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            records.first.periodLabel,
+            periodTitle,
             style: theme.textTheme.bodyMedium?.copyWith(
               fontWeight: FontWeight.bold,
               color: theme.colorScheme.onSurface,

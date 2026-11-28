@@ -51,10 +51,10 @@ void main() {
     expect(visible, isNot(contains('兼容说明')));
   });
 
-  test('没有可用标题时退回全文', () {
+  test('没有可用标题时不展示全文，避免混入无关内容', () {
     const notes = '- 新增名单导入\n- 修复统计细节';
 
-    expect(ReleaseNotes.forApp(notes), notes);
+    expect(ReleaseNotes.forApp(notes), isEmpty);
   });
 
   test('支持其它常见更新标题', () {

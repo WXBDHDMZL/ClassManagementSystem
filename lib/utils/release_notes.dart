@@ -15,7 +15,8 @@
 /// 发布正文通常还会包含升级说明、发布资产、签名与安装器说明；
 /// 这些内容不应出现在“版本内容”卡片里。优先使用作者显式标记的
 /// `<!-- app:start -->` / `<!-- app:end -->` 区块；没有标记时，
-/// 退回到第一个“主要变化”类标题下的内容；都没有时才展示全文。
+/// 只取第一个“主要变化”类标题下的内容；都没有时返回空，避免把
+/// 升级说明、发布资产等无关内容展示给用户。
 class ReleaseNotes {
   const ReleaseNotes._();
 
@@ -51,7 +52,7 @@ class ReleaseNotes {
       }
     }
 
-    return _mainSection(normalized) ?? normalized;
+    return _mainSection(normalized) ?? '';
   }
 
   static String? _mainSection(String notes) {

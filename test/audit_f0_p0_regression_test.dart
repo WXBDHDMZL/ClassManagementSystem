@@ -40,7 +40,9 @@ void main() {
     final release = GitHubReleaseInfo(
       tagName: 'v4.14.0',
       title: 'V4.14.0',
-      notes: '此前会出现记录消失的问题，现在改为按归属日保存。\n旧数据无需迁移。',
+      notes: '## 主要变化\n\n'
+          '- 此前会出现记录消失的问题，现在改为按归属日保存。\n'
+          '- 旧数据无需迁移。',
       assets: <GitHubAsset>[
         GitHubAsset(
           name: 'ClassManagementSystem_Setup_v4.14.0.exe',

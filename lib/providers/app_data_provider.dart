@@ -508,6 +508,9 @@ abstract class _ProviderBase extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       final result = await _storageService.loadData();
+      // 数据目录读取失败时优先让上面的 loadData 进入 loadFailed 分支；
+      // 锁定状态读取本身是尽力而为，不能抢占“暂停保存”的提示。
+      await AuthService.ensureLoaded();
       _appData = result.data;
       _lastRecordUndo = null;
       if (result.loadFailed) {
@@ -540,6 +543,12 @@ abstract class _ProviderBase extends ChangeNotifier {
       } else if (result.resetToEmpty) {
         _startupNotice = '数据文件损坏且无可用备份，现有数据已重置';
         _startupNoticeIsError = true;
+      }
+      if (AuthService.legacyStateUnsupported && _startupNotice == null) {
+        _startupNotice =
+            '检测到无法识别的密码锁定记录，已备份为 .lrx2_legacy；'
+            '失败次数和锁定时间已失效，请重新设置管理密码。';
+        _startupNoticeIsError = false;
       }
     } catch (e, s) {
       // 数据加载失败绝不能静默：用户看到"数据已重置"时，错误日志里
@@ -991,19 +1000,6 @@ abstract class _ProviderBase extends ChangeNotifier {
     return id;
   }
 
-  DateTime? _parseDate(String dateStr) {
-    // G-4：与 isValidYmdDate 统一口径（长度 10、1900–2100、真实公历日）—— 此前
-    // 这里自有一套（`int.parse` + 无年份界），出现"2026-1-1 能被这里解析、却被
-    // 其他写入路径拒绝"的两套标准。
-    if (!isValidYmdDate(dateStr)) return null;
-    final parts = dateStr.split('-');
-    return DateTime(
-      int.parse(parts[0]),
-      int.parse(parts[1]),
-      int.parse(parts[2]),
-    );
-  }
-
   String _formatDate(DateTime date) {
     return formatYmd(date);
   }
@@ -1092,19 +1088,10 @@ abstract class _ProviderBase extends ChangeNotifier {
     return _appData.recordsByDate.keys.toList()..sort((a, b) => b.compareTo(a));
   }
 
+  /// 与统计模块共用同一日期区间口径：超长区间取结束日往前最近
+  /// [kMaxDateRangeDays] 天，避免“历史选中区间”丢掉最近日期。
   List<String> getDatesBetween(String startDate, String endDate) {
-    final start = _parseDate(startDate);
-    final end = _parseDate(endDate);
-    if (start == null || end == null) return [];
-
-    final dates = <String>[];
-    var current = start;
-    while ((current.isBefore(end) || current.isAtSameMomentAs(end)) &&
-        dates.length < kMaxDateRangeDays) {
-      dates.add(_formatDate(current));
-      current = current.add(const Duration(days: 1));
-    }
-    return dates;
+    return StatisticsService.datesBetween(startDate, endDate);
   }
 
   /// 构造一条记录：**记录构造的唯一入口**（原因净化、空时段键规整、备注默认值、
