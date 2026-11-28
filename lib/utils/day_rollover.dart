@@ -9,35 +9,38 @@
  * 你可以依据该许可证使用、修改和再分发本软件；完整条款见根目录 LICENSE.txt。
  */
 
-import '../services/statistics_service.dart';
+import 'app_clock.dart';
+import 'today_boundary.dart';
 
-/// 跨天检测（修改4）：界面只需要在“自然日变化”时刷新一次。
+/// 跨天检测：界面只需要在“归属日变化”时刷新一次。
 ///
-/// 为什么单独抽出来：`DateTime.now()` 无法在测试里伪造；把“现在”注入进来，
-/// 就能用纯单元测试覆盖跨天逻辑，而不必真的等到午夜。
+/// 为什么不能用自然日：今日记录/角标/悬浮球都按 `attributionDateString`
+/// 读取（跨零点就寝的凌晨部分归前一天），自然日 0 点既不是数据边界，
+/// 也会让 06:20 的真正切换点永远不触发刷新。详见 `today_boundary.dart`。
 class DayRolloverTracker {
   DayRolloverTracker({DateTime Function()? clock, String? initialDate})
-      : _clock = clock ?? DateTime.now {
-    date = initialDate ?? StatisticsService.todayString(_clock());
+      : _clock = clock ?? AppClock.now {
+    date = initialDate ?? attributionDateString(_clock());
   }
 
   final DateTime Function() _clock;
 
-  /// 当前记录的日期（yyyy-MM-dd）。
+  /// 当前记录的归属日（yyyy-MM-dd）。
   late String date;
 
-  /// 检查是否跨天；返回 true 表示已跨天且 [date] 已更新。
+  /// 检查归属日是否变化；返回 true 表示已变化且 [date] 已更新。
   bool check() {
-    final today = StatisticsService.todayString(_clock());
+    final today = attributionDateString(_clock());
     if (today == date) return false;
     date = today;
     return true;
   }
 
-  /// 距离下一次自然日 0 点还有多久（不含额外缓冲）。
-  Duration untilNextDay() {
+  /// 距离下一次归属日变化还有多久（不含额外缓冲）。
+  Duration untilNextChange() {
     final now = _clock();
-    final next = DateTime(now.year, now.month, now.day + 1);
-    return next.difference(now);
+    final next = nextAttributionChange(now);
+    final diff = next.difference(now);
+    return diff.isNegative ? Duration.zero : diff;
   }
 }

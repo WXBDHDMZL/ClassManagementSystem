@@ -54,6 +54,10 @@ class AttendanceDialog extends StatefulWidget {
 class _AttendanceDialogState extends State<AttendanceDialog> {
   late String _date;
 
+  /// 用户是否手动改过日期。对话框长时间开着跨过 06:20 时，
+  /// 未手动改过的默认日期要在登记前校准。
+  bool _dateTouched = false;
+
   // 审计 P2-9：防止快速连点"登记/导出/撤销"时叠多个对话框或重复写盘。
   // 写操作幂等（重复调用 changed==0）但导出会弹保存框，连点会叠多个。
   bool _busy = false;
@@ -83,7 +87,21 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
       confirmText: '确定',
     );
     if (picked == null || !mounted) return;
-    setState(() => _date = StatisticsService.dateString(picked));
+    setState(() {
+      _date = StatisticsService.dateString(picked);
+      _dateTouched = true;
+    });
+  }
+
+  /// 登记前校准自动默认日期：用户没手动选过日期时，按当前归属日重算。
+  void _syncDefaultDateBeforeRegister() {
+    if (_dateTouched) return;
+    final now = AppClock.now();
+    final current = StatisticsService.dateString(
+      attributionDay(now, matchPeriodByMinutes(now.hour * 60 + now.minute)),
+    );
+    if (current == _date) return;
+    setState(() => _date = current);
   }
 
   /// 登记/修改考勤前确认记录人：与记录对话框同一口径 —— 功能开启时必须
@@ -110,6 +128,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
   }
 
   Future<void> _registerInner(AppDataProvider provider) async {
+    _syncDefaultDateBeforeRegister();
     if (!await ensurePasswordForAction(
       context,
       provider,

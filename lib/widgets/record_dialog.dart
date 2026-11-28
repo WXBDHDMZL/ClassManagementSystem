@@ -90,6 +90,10 @@ class RecordDialog extends StatefulWidget {
 class _RecordDialogState extends State<RecordDialog> {
   String _operationType = '批评';
   String? _selectedPeriod;
+
+  /// 用户是否手动改过时段。自动预选的时段在提交时要按当前时刻重新校准：
+  /// 对话框可能跨过 06:20 的归属日边界，直接沿用旧时段会把记录写错日期。
+  bool _periodTouched = false;
   List<String> _selectedReasons = [];
 
   /// 原因较多时默认只显示常用的一部分，其余折叠（已选项始终可见）。
@@ -248,6 +252,21 @@ class _RecordDialogState extends State<RecordDialog> {
   void _selectPeriod(String? key) {
     setState(() {
       _selectedPeriod = key;
+      _periodTouched = true;
+      _pruneReasons();
+    });
+  }
+
+  /// 提交前校准自动预选时段：只在“新建记录 + 设置开启自动选择 + 用户没动过”
+  /// 时重算，避免对话框跨过 06:20 后仍用打开时的旧时段。
+  void _syncAutoPeriodBeforeSubmit() {
+    if (widget.editRecord != null || _periodTouched) return;
+    final provider = context.read<AppDataProvider>();
+    if (!provider.appData.settings.autoSelectPeriod) return;
+    final current = _getCurrentPeriod();
+    if (current == _selectedPeriod) return;
+    setState(() {
+      _selectedPeriod = current;
       _pruneReasons();
     });
   }
@@ -260,6 +279,8 @@ class _RecordDialogState extends State<RecordDialog> {
       unawaited(showIdentityPicker(context));
       return;
     }
+    // 先校准自动预选时段，再取原因列表：跨过 06:20 后旧时段的原因可能已不适用。
+    _syncAutoPeriodBeforeSubmit();
     final allReasons = [..._selectedReasons];
     // 修复（审计 P1-11）：自定义原因框可能承载**多条**原因（编辑含多个非预置
     // 原因的记录时以"、"拼接回填）——提交时按顿号拆回多条，否则会被当成一条

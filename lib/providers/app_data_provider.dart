@@ -37,6 +37,7 @@ import '../services/atomic_file.dart';
 import '../services/log_file_service.dart';
 import '../services/security_service.dart';
 import '../utils/app_clock.dart';
+import '../utils/today_boundary.dart';
 
 part 'app_data/records.dart';
 part 'app_data/settings.dart';
@@ -933,9 +934,7 @@ abstract class _ProviderBase extends ChangeNotifier {
   /// 仅用于今日列表/角标/今日导出；备份时间、恢复码创建日等仍用
   /// [_getTodayString]（真实日历日）。
   String _attributionTodayString() {
-    final now = AppClock.now();
-    final periodKey = matchPeriodByMinutes(now.hour * 60 + now.minute);
-    return _formatDate(attributionDay(now, periodKey));
+    return attributionDateString(AppClock.now());
   }
 
   /// 当前归属日（yyyy-MM-dd），供“今日”展示/导出复用。

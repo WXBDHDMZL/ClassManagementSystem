@@ -517,8 +517,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _scheduleDayCheck() {
     _dayTimer?.cancel();
-    // 多等 1 秒，确保触发时已过自然日 0 点。
-    final delay = _dayTracker.untilNextDay() + const Duration(seconds: 1);
+    // 归属日不等于自然日：默认就寝时段在 06:20 才切换，不能等到 0 点。
+    // 多等 1 秒，确保触发时已越过边界。
+    final delay = _dayTracker.untilNextChange() + const Duration(seconds: 1);
     _dayTimer = Timer(delay, _checkDayChanged);
   }
 
