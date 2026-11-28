@@ -18,6 +18,7 @@ import '../constants/time_periods.dart';
 import '../models/student_record.dart';
 import '../utils/app_date.dart';
 import '../utils/record_text.dart';
+import '../utils/student_name.dart';
 import 'statistics_service.dart';
 import 'xlsx_reader.dart';
 
@@ -220,6 +221,11 @@ class ImportService {
       }
       return iso.length >= 10 ? iso.substring(0, 10) : iso;
     }
+    // 审计 A-21：公式单元格（`=SUM(A1:A2)` 之类）在 excel 包里只有公式
+    // 文本、没有缓存值。此前落到 `toString()`，把公式原文当成姓名/原因
+    // 写进库：既污染数据，又让判重键与真实记录对不上。这里按"空单元格"
+    // 处理，含公式必填列的行会被正常计入"跳过 N 行"。
+    if (value is excel.FormulaCellValue) return '';
     return value.toString().trim();
   }
 
@@ -347,8 +353,21 @@ class ImportService {
         skipped++;
         continue;
       }
+      // 审计 A-04：记录导入此前只把超长姓名截断到 30 字（与名单导入
+      // `validateStudentName` 直接拒绝的口径相反），前 30 字相同的两个人
+      // 还会被合并成同一学生。这里与名单导入统一为"拒绝该行并计入跳过"。
+      if (validateStudentName(name) != null) {
+        skipped++;
+        continue;
+      }
 
+      // 审计 A-21：时间写错（如 25:99）此前被静默归零成 00:00:00，
+      // 用户以为导入成功、时间却变了。改为判定该行无效并计入跳过。
       final time = _normalizeTime(cell(header.time));
+      if (time == null) {
+        skipped++;
+        continue;
+      }
       final reasons = cell(header.reason);
       final periodText = cell(header.period);
       final periodKey = matchTimePeriodKey(periodText, periods);
@@ -505,7 +524,10 @@ class ImportService {
   }
 
   /// 归一化时间：支持 HH:mm 与 HH:mm:ss，缺失时用 00:00:00。
-  static String _normalizeTime(String text) {
+  ///
+  /// 返回 null 表示"这一格写了时间但根本不合法"（如 25:99、8点半），
+  /// 由调用方判定整行无效 —— 不再静默归零（审计 A-21）。
+  static String? _normalizeTime(String text) {
     if (text.isEmpty) return '00:00:00';
     // 修复（审计 P2-43）：时间型单元格渲染为 "1899-12-31 08:30:00"，
     // 取最后一段（时分秒）再解析。
@@ -515,17 +537,16 @@ class ImportService {
     final parts = value.split(':');
     final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '');
     final minute = int.tryParse(parts.length > 1 ? parts[1] : '');
-    if (hour == null || minute == null) return '00:00:00';
+    if (hour == null || minute == null) return null;
     final second = int.tryParse(parts.length > 2 ? parts[2] : '') ?? 0;
-    // G-32：超范围不再静默钳制（如 25:99 被钳成 23:59，用户无从得知时间被改），
-    // 按"缺时间"处理为 00:00:00。
+    // G-32 + 审计 A-21：超范围既不静默钳制也不静默归零，直接判该行无效。
     if (hour < 0 ||
         hour > 23 ||
         minute < 0 ||
         minute > 59 ||
         second < 0 ||
         second > 59) {
-      return '00:00:00';
+      return null;
     }
     return '${twoDigit(hour)}:${twoDigit(minute)}:${twoDigit(second)}';
   }

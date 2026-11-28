@@ -69,7 +69,13 @@ void main() {
       expect(preview.duplicateImports, hasLength(1));
     });
 
-    test('超长姓名按写入侧上限裁剪后再判重', () {
+    test('超长姓名整行跳过，不再裁剪后参与判重', () {
+      // 旧期望（审计 A-04 之前）：表格里的 35 字名会被裁剪成 30 字写进库，
+      // 判重键也按同一上限裁剪，于是与库里的 30 字姓名"张"*30 判为重复，
+      // 断言 `duplicates` 有 1 条、`records` 为空。
+      // 新期望：记录导入与名单导入统一口径 —— 超长姓名直接拒绝该行
+      // （`validateStudentName`），既不写库也不参与判重，计入"跳过 N 行"。
+      // 理由：裁剪会让前 30 字相同的两个不同学生被合并成同一人。
       final clippedName = '张' * 30;
       final longName = '张' * 35;
       final csv = '日期,学生姓名,操作项目,原因,备注\n'
@@ -78,9 +84,9 @@ void main() {
         csv,
         existing: [_record(name: clippedName)],
       );
-      // 表格里的 35 字名会被写成 30 字；判重键也必须按同一上限裁剪。
-      expect(preview.duplicates, hasLength(1));
+      expect(preview.duplicates, isEmpty);
       expect(preview.records, isEmpty);
+      expect(preview.skippedRows, 1);
     });
 
     test('缺日期列：直接报错，不再按今天导入', () {
