@@ -286,10 +286,11 @@ def lane_commit(args: argparse.Namespace, lanes: dict) -> int:
     changed = changed_files(args.base)
     if changed:
         selected, all_needed = select_affected(changed, lanes)
-        if all_needed or len(selected) > 10:
-            print("[commit] 受影响面较大，保留核心冒烟，其余交给 full/nightly。")
-        else:
-            tests.update(selected)
+        # 审计 A-27：此前"受影响文件超过 10 个"会整体丢弃受影响测试、只留核心冒烟，
+        # 于是改动面越大覆盖越少。现在无论如何都跑受影响测试，只用提示说明影响面。
+        if all_needed:
+            print("[commit] 影响面较大（依赖扩散），仍运行全部受影响测试。")
+        tests.update(selected)
     ordered = sorted(tests)
     print(f"[commit] 运行 {len(ordered)} 个测试文件（核心 {len(core)} + 受影响）。")
     if args.list:
@@ -320,7 +321,9 @@ def lane_full(args: argparse.Namespace, lanes: dict) -> int:
     if code != 0:
         return code
     if args.coverage:
-        return run_coverage_report(args.enforce_coverage)
+        # 审计 A-27：此前 --enforce-coverage 默认关闭，"只出报告不判失败"等于没有门禁。
+        # 现在默认强制；确需只看数字时用 --no-enforce-coverage。
+        return run_coverage_report(not args.no_enforce_coverage)
     return 0
 
 
@@ -356,7 +359,16 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="只列出将运行的测试文件")
     parser.add_argument("--jobs", type=int, default=0, help="传给 flutter test -j")
     parser.add_argument("--coverage", action="store_true", help="full/release 收集覆盖率")
-    parser.add_argument("--enforce-coverage", action="store_true", help="覆盖率不达标时失败")
+    parser.add_argument(
+        "--enforce-coverage",
+        action="store_true",
+        help="（已默认开启）覆盖率不达标时失败；保留该参数以兼容旧命令行",
+    )
+    parser.add_argument(
+        "--no-enforce-coverage",
+        action="store_true",
+        help="只生成覆盖率报告，不做阈值判定（应急排查用）",
+    )
     parser.add_argument("--data-source", default=None, help="release_check 的数据副本")
     parser.add_argument("--signing-key", default=None, help="release_check 的 Ed25519 私钥")
     parser.add_argument("--skip-build", action="store_true")

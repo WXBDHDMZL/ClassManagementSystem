@@ -5,8 +5,8 @@
 | 车道 | 内容 | 实测 |
 | --- | --- | --- |
 | `fast` | 门禁 + `flutter analyze` + 改动直接影响的纯单元/烟测；Widget 流程测试留给 commit | 56s（改 `history_dialog.dart`）、50s（文档/工具回退）、9s（仅改 tools） |
-| `commit` | 门禁 + analyze + 核心域 26 个 suite；改动影响超过 10 个 suite 时只保留核心 | 121s，194 用例 |
-| `full` | 门禁 + analyze + 全部 117 个测试文件 / 779 用例 | 5 分 02 秒（4 核，不含覆盖率） |
+| `commit` | 门禁 + analyze + 核心域 26 个 suite + **全部**受影响 suite（不再按数量截断） | 71s / 207 用例（小改动）；245s / 884 用例（大面积改动） |
+| `full` | 门禁 + analyze + 全部 130 个测试文件 / 884 用例 | 363s（含覆盖率，4 核）；不含覆盖率约 5 分钟 |
 | `release` | full + `release_check.py` 真实安装/覆盖升级/冒烟/卸载 | 需合成数据副本与签名私钥 |
 
 ## 常用命令
@@ -38,12 +38,22 @@ Python 单测：`python -m unittest discover -s tools -p 'test_*.py' -v`（24 �
 
 `--coverage` 生成 `coverage/lcov.info`，`tools/coverage_check.py` 输出总行覆盖与 9 个核心文件覆盖。
 
-当前基线（2026-11-22，779 用例）：
+当前基线（2026-11-28 审计 A-01~A-27 修复后，884 用例）：
 
-- 总行覆盖率 75.03%（10114/13480）
-- 核心模块 84.78%（2033/2398）
-- 最低核心文件：`github_update_service.dart` 48.90%、`storage_crypto.dart` 70.59%
-- 目标：总 ≥80%、核心 ≥85%；`--enforce-coverage` 时未达标会失败，目前**未**在 CI 中强制。
+- 总行覆盖率 76.39%（10686/13989）
+- 核心模块 87.04%（2190/2516）
+- 最低核心文件：`github_update_service.dart` 50.77%、`import_restore.dart` 81.79%
+
+### 门禁规则（审计 A-27）
+
+- `--coverage` 现在**默认强制**阈值；`full` 车道的 `--enforce-coverage` 只是兼容保留参数，
+  只出报告请用 `--no-enforce-coverage`。
+- 绝对底线（过渡值）：总 ≥75.0%、核心 ≥85.7%。
+- 棘轮基线：`tools/coverage_baseline.json`（一位小数、向下取整）。实测比基线低超过 0.3 个
+  百分点即失败；`python tools/coverage_check.py --update-baseline` 只允许上调，下调必须
+  `--allow-lower --reason <原因>` 并留痕。
+- 回到目标值的路线图：补 `github_update_service`、导入/撤销失败路径与桌面链路的测试，
+  总覆盖率过 80%、核心过 85% 后把绝对底线改成 80.0/85.0，并把该基线一并上调。
 
 ## CI
 
@@ -68,4 +78,4 @@ powershell -ExecutionPolicy Bypass -File tools/windows_smoke.ps1 `
 
 - Windows 原生托盘/悬浮球/单实例/安装器/迁移工具仍以手工或 release 车道验收为主，尚未纳入 `fast/commit`。
 - 更新检查只有解析与签名单测；真实 GitHub 302 跳转仍靠 release 验收。
-- 覆盖率未达目标，先以报告为主，稳定后再把 `--enforce-coverage` 接入 CI。
+- 覆盖率绝对底线仍是过渡值（75.0/85.7），距离目标 80/85 还差约 3.6 个百分点。

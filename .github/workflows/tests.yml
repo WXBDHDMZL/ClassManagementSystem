@@ -52,6 +52,6 @@ jobs:
       - name: Full lane + coverage
         run: python tools/check.py --lane full --coverage
       - name: Coverage floor
-        # 当前实测约 75% / 84.8%；先设 70% / 80% 的防倒退底线，
-        # 避免“只生成报告、不执行阈值”成为事实上的无门禁。
-        run: python tools/coverage_check.py --min-overall 70 --min-core 80 --enforce
+        # 审计 A-27：full 车道已默认强制阈值；这里额外校验"棘轮"基线
+        # （tools/coverage_baseline.json，只升不降，低于基线 0.3 个百分点即失败）。
+        run: python tools/check.py --lane full --coverage

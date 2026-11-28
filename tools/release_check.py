@@ -424,8 +424,11 @@ def stage_quality(version: str, skip_tests: bool) -> bool:
             return False
 
     if skip_tests:
-        say("  [SKIP] 按参数跳过 analyze 与全量测试")
-        return True
+        # 审计 A-27：此前 --skip-tests 直接返回成功，等于发布验收可以完全不做质量检查。
+        # 现在必须显式再加 --allow-skip-tests，并且结果里要留下醒目警告。
+        say("  [FAIL] 发布验收不允许用 --skip-tests 跳过 analyze 与全量测试")
+        say("         如确有原因（例如仅供内部冒烟），请加 --allow-skip-tests 并自行承担风险")
+        return False
 
     flutter = os.environ.get("CMS_FLUTTER") or shutil.which("flutter")
     if not flutter:
@@ -943,7 +946,16 @@ def cleanup_sandbox() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="发布验收：构建、打包、沙箱安装与真实数据冒烟")
-    parser.add_argument("--skip-tests", action="store_true", help="跳过 analyze 与全量测试")
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="跳过 analyze 与全量测试（必须同时给 --allow-skip-tests；结果不可用于发版结论）",
+    )
+    parser.add_argument(
+        "--allow-skip-tests",
+        action="store_true",
+        help="确认已知晓风险并允许跳过测试",
+    )
     parser.add_argument("--skip-build", action="store_true", help="复用已有 exe，只验证安装与冒烟")
     parser.add_argument("--keep-sandbox", action="store_true", help="保留临时安装与数据目录")
     parser.add_argument(
@@ -982,7 +994,10 @@ def main() -> int:
 
     SANDBOX_ROOT.mkdir(parents=True, exist_ok=True)
 
-    if not stage_quality(version, args.skip_tests):
+    skip_tests = args.skip_tests and getattr(args, "allow_skip_tests", False)
+    if skip_tests:
+        say("  [WARN] 已按 --allow-skip-tests 跳过 analyze 与全量测试：本次结果不可用于发版结论")
+    if not stage_quality(version, skip_tests):
         write_report(version, pubspec_version, {})
         return 1
 
