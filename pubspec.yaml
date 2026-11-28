@@ -2,7 +2,7 @@ name: class_management_system
 description: "班级管理系统：面向班主任的记录、考勤与统计工具。"
 publish_to: 'none'
 
-version: 5.0.1+186
+version: 5.0.2+187
 environment:
   sdk: ^3.12.2
 

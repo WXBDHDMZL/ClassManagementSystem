@@ -3,7 +3,7 @@
  * 作者 (Author): WXBDHDMZL
  * 版权 (Copyright): © 2026 WXBDHDMZL
  * 许可证 (License): AGPL-3.0-only
- * 版本 (Version): V5.0.1
+ * 版本 (Version): V5.0.2
  * 创建日期 (Created): 2026-07-25
  *
  * 本软件以 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
